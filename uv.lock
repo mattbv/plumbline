@@ -1053,7 +1053,7 @@ wheels = [
 [[package]]
 name = "ontolith"
 version = "1.0.0"
-source = { git = "https://github.com/mattbv/ontolith.git?rev=v1.0.0#4bdc99125f6dadf32a90f871b7488d216b33ad7a" }
+source = { git = "https://github.com/ontolith/ontolith.git?rev=v1.0.0#4bdc99125f6dadf32a90f871b7488d216b33ad7a" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyseccomp", marker = "sys_platform == 'linux'" },
@@ -1193,7 +1193,7 @@ requires-dist = [
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "interrogate", marker = "extra == 'dev'", specifier = ">=1.5" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
-    { name = "ontolith", git = "https://github.com/mattbv/ontolith.git?rev=v1.0.0" },
+    { name = "ontolith", git = "https://github.com/ontolith/ontolith.git?rev=v1.0.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6" },
     { name = "pydantic", specifier = ">=2.6" },

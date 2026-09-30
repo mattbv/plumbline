@@ -1,7 +1,7 @@
 # Plumbline
 
 Governed, bitemporal reconciliation between a codebase and the documentation
-that describes it. Built on [Ontolith](https://github.com/mattbv/ontolith).
+that describes it. Built on [Ontolith](https://github.com/ontolith/ontolith).
 
 Plumbline ingests a repository's source code and its documentation
 (docstrings, README, `docs/`, CHANGELOG, GitHub wiki) into an Ontolith

@@ -25,7 +25,7 @@ dependencies = [
 	# v1.0.0 tag via a direct git reference until it is. Upper-bound <2.0
 	# per the PRD's own substrate decision: a major bump needs a deliberate
 	# review, not an automatic pickup.
-	"ontolith @ git+https://github.com/mattbv/ontolith.git@v1.0.0",
+	"ontolith @ git+https://github.com/ontolith/ontolith.git@v1.0.0",
 	"typer>=0.12",
 	"pydantic>=2.6",
 	"tomli>=2.0; python_version<'3.11'",
