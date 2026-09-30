@@ -31,7 +31,7 @@ Include:
 Plumbline parses untrusted repository content by design (READMEs, wikis,
 and source files from any repository it's pointed at) and invites AI
 agents to propose changes. Its own security posture mirrors
-[Ontolith's](https://github.com/mattbv/ontolith/blob/main/SECURITY.md),
+[Ontolith's](https://github.com/ontolith/ontolith/blob/main/SECURITY.md),
 the substrate it's built on:
 
 - **No direct-write path for any AI principal, anywhere** (PRD §9.2). Every
