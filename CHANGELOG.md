@@ -1,0 +1,30 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- M0 foundations scaffold: clean-architecture package layout
+  (`domain`/`application`/`adapters`/`interfaces`), enforced by an
+  `import-linter` dependency-rule contract.
+- The Ontolith class-DSL schema (`Release`, `Symbol`, `Fact`, `DocSource`,
+  `DocSection`, `Waiver`) implementing the two-layer reconciliation model —
+  see ADR-0001.
+- `plumb init` — creates `plumbline.toml` and a real Ontolith-backed
+  knowledge base with the schema applied and an admin principal registered.
+- `plumb --version`, and stubbed `ingest`/`drift`/`explain`/`as-of`/
+  `blame`/`check` subcommands with settled argument shapes (real
+  implementation is M1).
+- Pure domain logic: the aspect catalog, value canonicalization, anchor
+  URI parsing, and resolution dispositions (PRD §7.4/§7.3/§7.6) — fully
+  tested, no external dependencies.
+- ADR-0001 (two-layer reconciliation model) and ADR-0002 (ports as
+  `Protocol`s).
+- CI: format/lint/type/import-linter/test/security gates.
+
+<!-- No tags exist yet -- add a compare link here once the first one does. -->
