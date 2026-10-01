@@ -11,7 +11,9 @@ should trigger a re-projection pass (ING-5), never a silent behavior change.
 from __future__ import annotations
 
 import ast
+import json
 import re
+from collections.abc import Sequence
 
 CANONICALIZER_VERSION = "1"
 
@@ -22,6 +24,16 @@ _WHITESPACE = re.compile(r"\s+")
 def canonical_bool(value: bool) -> str:
     """Canonical form of a boolean aspect value: the literal "true"/"false"."""
     return "true" if value else "false"
+
+
+def canonical_param_names(names: Sequence[str]) -> str:
+    """Canonical form of an ordered parameter name list (`param_names`, PRD §7.4).
+
+    Compact JSON in declaration order. The caller excludes `self`/`cls` and
+    renders `*args` / `**kwargs` as `*name` / `**name`; this function only
+    fixes the *serialization*, so every source produces the same string.
+    """
+    return json.dumps(list(names), separators=(",", ":"))
 
 
 def canonical_literal(value: str) -> str | None:

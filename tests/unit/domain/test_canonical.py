@@ -64,3 +64,18 @@ class TestCanonicalVersion:
 
     def test_non_version_text_abstains(self) -> None:
         assert canonical.canonical_version("the next release") is None
+
+
+class TestCanonicalParamNames:
+    def test_compact_json_in_declaration_order(self) -> None:
+        assert canonical.canonical_param_names(["host", "timeout", "**opts"]) == (
+            '["host","timeout","**opts"]'
+        )
+
+    def test_empty_signature(self) -> None:
+        assert canonical.canonical_param_names([]) == "[]"
+
+    def test_order_is_significant(self) -> None:
+        assert canonical.canonical_param_names(["a", "b"]) != canonical.canonical_param_names(
+            ["b", "a"]
+        )
