@@ -24,6 +24,10 @@ from ontolith.schema import SchemaIR, compile_schema
 
 SCHEMA_NAMESPACE = "default"
 SCHEMA_VERSION = 1
+"""Ontolith requires monotonic versions starting at 1 for a fresh KB. Plumbline has
+not been released, so no KB exists outside development and v1 is still being
+shaped in place (`Symbol.namespace_closed` was added this way, ADR-0003). From the
+first release on, any change here needs a new version and a migration chain."""
 
 
 class Release(Concept):
@@ -59,6 +63,12 @@ class Symbol(Concept):
 
     present: Boolean = Property(temporality="time_varying")
     """False after deletion. The window closes; history is kept, never deleted."""
+
+    namespace_closed: Boolean | None = Property(required=False, temporality="time_varying")
+    """Whether a module's or class's member names are fully determined by its
+    source (ADR-0003). Written by the code importer for kind `module`/`class`
+    only; absent means "not known to be closed", so the projector abstains
+    from asserting that a member does not exist."""
 
 
 class Fact(Concept):
