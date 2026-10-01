@@ -1,0 +1,26 @@
+name: Bug report
+description: Something behaves differently from the documentation or product spec
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A short command sequence or script that shows the problem.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Plumbline version, Python version, and OS
+      placeholder: "0.1.0, 3.12, macOS 15"
+    validations:
+      required: true
