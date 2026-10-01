@@ -8,7 +8,7 @@ project actually is against that plan, updated as milestones close.
 
 | Milestone | Scope | Exit criteria | Status |
 |---|---|---|---|
-| **M0 — Foundations** | Clean-architecture scaffold, tooling, CI, ADR-0001/0002, the drift zoo | Drift zoo ingestion is deterministic across two runs; every seeded scenario's routing outcome is asserted by tests | **Started.** Scaffold (this commit): package layout, `import-linter` contract, quality gates, `plumb init` real end to end against a real Ontolith KB. The drift zoo has its framework and a first 20 scenarios (`tests/zoo/`, ~60 more to go); the real `CodeImporter`/`DocImporter`/`Reasoner` implementations are not started. |
+| **M0 — Foundations** | Clean-architecture scaffold, tooling, CI, ADR-0001/0002, the drift zoo | Drift zoo ingestion is deterministic across two runs; every seeded scenario's routing outcome is asserted by tests | **Started.** Scaffold (this commit): package layout, `import-linter` contract, quality gates, `plumb init` real end to end against a real Ontolith KB. The drift zoo has its framework and a first 20 scenarios (`tests/zoo/`, ~60 more to go); the `CodeImporter` has its first part (symbols, signatures, raises, deprecation); the `DocImporter`s and the projector/lineage `Reasoner`s are not started. |
 | **M1 — Drift Radar** (0.1) | Ingestion (ING-1–2, 4–11), drift detection (DRF-1–5, 7), read-only CLI | Drift-zoo precision ≥95%/recall ≥90%; ≥90% precision on a hand-labeled sample from 3 real repos | Not started |
 | **M2 — Reconcile** (0.2) | Dispositions, waivers, GitHub App, MCP façade, backfill | Full J2→J3→merge→corroboration loop demonstrated on a real repo with a real agent; zero direct-write paths proven by a closed-set test | Not started |
 | **M3 — Publish & Harden** (1.0) | Reference site, verified-context export, wiki ingestion, security review | All P0 requirements met; budgets green; no open high-severity security findings; 5 production design partners | Not started |
@@ -21,9 +21,11 @@ project actually is against that plan, updated as milestones close.
    scenarios (PRD §10 M0). Nothing in M1 can be trustworthy without it.
    *Framework and first 20 scenarios landed; see `tests/zoo/README.md` for
    what remains.*
-2. A real `CodeImporter` (static AST analysis, PRD ING-1) — the first
-   adapter that turns `IngestOneCommit` from structurally-correct into
-   actually useful.
+2. A real `CodeImporter` (static AST analysis, PRD ING-1). *Part 1 landed
+   (`plumbline.adapters.python_code_importer`): symbols, signatures,
+   `raises`, and deprecation, checked against the drift zoo's labels. Still
+   to do: `cli.*` (argparse/click/typer), `env.*`, and `project.*` facts, and
+   the snapshot-vs-KB diff that derives "no longer exists".*
 3. Widen `KnowledgeBase` (`plumbline.application.ports`) to expose what
    `record_code_fact`/`record_claim` need from a real `Ontology` connection
    (principal resolution, natural-key-based entity lookup) — currently a
