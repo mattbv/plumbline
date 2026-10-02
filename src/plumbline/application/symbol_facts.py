@@ -77,10 +77,12 @@ class SymbolFields:
 
 
 def _path(claim: RawClaim) -> str:
+    """The path a claim's anchor points at."""
     return anchors.parse(claim.anchor_uri).path
 
 
 def _by_key_and_path(claims: Iterable[RawClaim]) -> dict[str, dict[str, list[RawClaim]]]:
+    """Group claims by symbol key, then by the path that made them."""
     grouped: dict[str, dict[str, list[RawClaim]]] = defaultdict(lambda: defaultdict(list))
     for claim in claims:
         grouped[claim.symbol_key][_path(claim)].append(claim)
@@ -129,12 +131,14 @@ def find_conflicts(claims: Iterable[RawClaim]) -> list[KeyConflict]:
 
 
 def _winner(key: str, by_path: dict[str, list[RawClaim]]) -> tuple[SymbolFields, str]:
+    """The owning path's fields for a key claimed from one or more paths."""
     candidates = {path: _assemble_one(key, claims) for path, claims in by_path.items()}
     path = min(candidates, key=lambda p: (-kind_rank(candidates[p].kind), p))
     return candidates[path], path
 
 
 def _assemble_one(symbol_key: str, claims: list[RawClaim]) -> SymbolFields:
+    """Assemble one symbol's fields from the claims of a single path."""
     by_aspect = {c.aspect: c for c in claims}
     if len(by_aspect) != len(claims):
         raise ValueError(f"{symbol_key}: an aspect is claimed more than once")
