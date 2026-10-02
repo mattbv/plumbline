@@ -26,12 +26,15 @@ project actually is against that plan, updated as milestones close.
    `raises`, and deprecation, checked against the drift zoo's labels. Part 2
    added the namespace-closure analysis (ADR-0003). The importer's output now
    assembles into L1 `Symbol` fields (ADR-0004, `plumbline.application.symbol_facts`).
-   Still to do: `cli.*` (argparse/click/typer), `env.*`, and `project.*` facts, and
+   The write path is real (`IngestOneCommit` -> `OntolithKnowledgeBase`), and the
+   zoo ingests deterministically into a real Ontolith KB. Still to do: `cli.*` (argparse/click/typer), `env.*`, and `project.*` facts, and
    the snapshot-vs-KB diff that derives "no longer exists".*
-3. Widen `KnowledgeBase` (`plumbline.application.ports`) to expose what
-   `record_code_fact`/`record_claim` need from a real `Ontology` connection
-   (principal resolution, natural-key-based entity lookup) — currently a
-   deliberate `NotImplementedError` in `plumbline.adapters.ontolith_kb`.
+3. Widen `KnowledgeBase` (`plumbline.application.ports`) to expose what a real
+   `Ontology` connection needs. *`symbol_fields` and `record_code_fact` landed
+   (L1 writes, replay clock, out-of-order guard). `record_claim` (L2 doc claims:
+   importer principals, `Fact` entity resolution by natural key) is still a
+   deliberate `NotImplementedError` in `plumbline.adapters.ontolith_kb`. The
+   snapshot-vs-KB diff that derives `present = false` is also still to do.*
 
 ## Notes for whoever picks this up
 
