@@ -44,6 +44,15 @@ the first four rows.
 Values must already be in canonical form (`plumbline.domain.canonical`); the
 linter rejects anything else.
 
+## Closure expectations
+
+A `ClosureExpectation` labels the `namespace_closed` value (ADR-0003) the code
+importer must emit for a module or class after a commit. `closed=True` means
+every name in that namespace is determined by the source, so a documented name
+that is missing is *drift*; `closed=False` means something could still supply
+it, so the claim stays *unverified* (an `abstain`). Pair each closure label with
+the L2 expectation it explains.
+
 ## Adding a scenario
 
 1. Pick the PRD section or requirement it exercises and put it in `prd_refs`.

@@ -18,7 +18,15 @@ from collections.abc import Sequence
 from plumbline.domain import aspects, canonical
 from plumbline.domain.aspects import Aspect, ValueShape
 
-from .model import DOC_PRINCIPALS, DriftClass, Expectation, Layer, Outcome, Scenario
+from .model import (
+    DOC_PRINCIPALS,
+    ClosureExpectation,
+    DriftClass,
+    Expectation,
+    Layer,
+    Outcome,
+    Scenario,
+)
 
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 _PLACEHOLDERS = {
@@ -113,6 +121,30 @@ def _module_depth(files: dict[str, str], symbol_path: list[str]) -> int:
     return 0
 
 
+def _symbol_problems(scenario: Scenario, where: str, commit: str, symbol: str) -> list[str]:
+    """Problems with a symbol key: right scenario, and its module exists at `commit`."""
+    if symbol.startswith("py:"):
+        path = symbol.removeprefix("py:").split(".")
+        if path[0] != scenario.id:
+            return [f"{where}: symbol must start with the scenario id"]
+        depth = _module_depth(scenario.files_at(commit), path)
+        if depth < min(2, len(path) - 1):
+            return [f"{where}: no module for this symbol exists at {commit}"]
+        return []
+    if not symbol.startswith(f"project:{scenario.id}"):
+        return [f"{where}: symbol must be 'py:<id>.…' or 'project:<id>'"]
+    return []
+
+
+def _lint_closure(scenario: Scenario, index: int, closure: ClosureExpectation) -> list[str]:
+    where = f"{scenario.id} closure #{index} ({closure.symbol} @ {closure.commit})"
+    if closure.commit not in [c.label for c in scenario.commits]:
+        return [f"{where}: unknown commit {closure.commit!r}"]
+    if not closure.symbol.startswith("py:"):
+        return [f"{where}: only Python modules and classes have a namespace"]
+    return _symbol_problems(scenario, where, closure.commit, closure.symbol)
+
+
 def _lint_expectation(scenario: Scenario, index: int, exp: Expectation) -> list[str]:
     where = f"{scenario.id} expectation #{index} ({exp.symbol}#{exp.aspect} @ {exp.commit})"
     problems: list[str] = []
@@ -143,16 +175,7 @@ def _lint_expectation(scenario: Scenario, index: int, exp: Expectation) -> list[
         if not aspect.drift_capable and exp.outcome is Outcome.CONTRADICT:
             problems.append(f"{where}: {exp.aspect} is corroboration-only and can never contradict")
 
-    symbol_path = exp.symbol.removeprefix("py:").split(".") if exp.symbol.startswith("py:") else []
-    if exp.symbol.startswith("py:"):
-        if symbol_path[0] != scenario.id:
-            problems.append(f"{where}: symbol must start with the scenario id")
-        elif _module_depth(scenario.files_at(exp.commit), symbol_path) < min(
-            2, len(symbol_path) - 1
-        ):
-            problems.append(f"{where}: no module for this symbol exists at {exp.commit}")
-    elif not exp.symbol.startswith(f"project:{scenario.id}"):
-        problems.append(f"{where}: symbol must be 'py:<id>.…' or 'project:<id>'")
+    problems.extend(_symbol_problems(scenario, where, exp.commit, exp.symbol))
 
     for principal, _ in exp.claims:
         if principal not in DOC_PRINCIPALS:
@@ -213,4 +236,6 @@ def lint(scenario: Scenario) -> list[str]:
                     problems.append(f"{scenario.id}@{commit.label}: {path} does not parse: {err}")
     for index, exp in enumerate(scenario.expectations):
         problems.extend(_lint_expectation(scenario, index, exp))
+    for index, closure in enumerate(scenario.closures):
+        problems.extend(_lint_closure(scenario, index, closure))
     return problems

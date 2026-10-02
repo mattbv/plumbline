@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from ..model import Scenario
-from . import abstention, history, signatures
+from . import abstention, closure, history, signatures
 
-ALL: tuple[Scenario, ...] = (*signatures.SCENARIOS, *abstention.SCENARIOS, *history.SCENARIOS)
+ALL: tuple[Scenario, ...] = (
+    *signatures.SCENARIOS,
+    *abstention.SCENARIOS,
+    *history.SCENARIOS,
+    *closure.SCENARIOS,
+)

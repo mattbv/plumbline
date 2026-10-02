@@ -127,3 +127,44 @@ mapped onto L1 fields (and how the projector turns L1 back into per-aspect
 `Fact` slots) is a separate decision that needs its own ADR before
 `KnowledgeBase.record_code_fact` is implemented. This ADR assumes only that
 `namespace_closed` is one more `time_varying` `Symbol` field.
+
+## Amendment 1: found while implementing the closure analysis
+
+Writing the importer showed that the rule set above, taken literally, would
+still produce false "does not exist" findings. These changes are all in the
+conservative direction (the projector abstains more); none loosens a rule.
+
+1. **Closure promises a complete name list.** `namespace_closed = true` only
+   means something if the importer has *listed every name the namespace binds*.
+   The importer therefore also emits `exists` for names bound by assignment
+   (`connect = _connect`, constants), by any import form, by other binding
+   statements (`for`, `with … as`, `except … as`, `:=`, `match` captures), for
+   class attributes, and for instance attributes assigned through the method
+   receiver (`self.timeout = …`, `cls.registry = …`). Without this, a
+   documented alias or attribute would be reported absent.
+2. **Any base other than `object` opens a class.** The proposal allowed bases
+   that are themselves closed classes in the same file. That is unsound:
+   a method inherited from an in-file `Base` is a real member of `Child`, but
+   the importer records `Base.close` and not `Child.close`. Until inheritance is
+   modelled (record bases, or resolve the MRO in the projector), only a class
+   with no bases is closed.
+3. **More things open a namespace.** A module is also open if it has a
+   `global` statement anywhere (it binds module names at runtime), a
+   `locals()` call, or a `sys.modules[…]` subscript, and these are checked
+   inside class bodies too, since a class body executes at import time. A class
+   is also open if its body calls `vars()`/`locals()`/`globals()`/`exec()`/
+   `eval()`, or if a method calls `setattr`/`delattr`/`vars` on, or reads
+   `__dict__` of, its receiver.
+4. **Decorator allow-list, fixed:** `final`, `runtime_checkable`, `deprecated`,
+   `type_check_only`. `dataclass` and `functools.total_ordering` are excluded:
+   they add members.
+
+### Left for the projector (not decided here)
+
+- **Never project absence for dunder names** (`__repr__`, `__eq__`, …) on a
+  closed class: `object` supplies them without any definition in the source.
+- Known blind spots, accepted for now: names removed with `del`; `:=` inside a
+  comprehension at module level; dynamic calls inside decorator expressions or
+  default values; `__all__` is not consulted. Each can only cause a false
+  "closed", so they should be closed by amending the rules, not by the
+  projector.
