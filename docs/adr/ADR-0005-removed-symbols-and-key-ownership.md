@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -150,7 +150,12 @@ resumes.
 - Removal is conservative by construction: every uncertain case leaves the KB
   as it was, which can only delay a true drift report, never invent one.
 
-## Open questions for you
+## Open questions (resolved)
+
+All four recommendations were accepted as written: module > definition > attribute
+with the first writer keeping a tie; a file that stops parsing leaves its symbols
+untouched; `kind = ambiguous` for duplicate definitions; and the per-file manifest
+entity is deferred until path lookup is measured to matter.
 
 1. **Ownership ranks and "first writer keeps a tie".** Is module > definition >
    attribute the right order, and is keeping the first writer on a tie
