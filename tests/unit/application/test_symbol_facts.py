@@ -41,6 +41,11 @@ class TestAssemble:
         fields = assemble(METHOD)["py:pkg.mod.C.m"]
         assert SHA not in fields.defined_at and "#" not in fields.defined_at
 
+    def test_the_anchor_is_kept_as_provenance_but_is_not_a_field(self) -> None:
+        fields = assemble(METHOD)["py:pkg.mod.C.m"]
+        assert fields.anchor == f"repo://o/r@{SHA}/src/pkg/mod.py#L1-L3"
+        assert "anchor" not in fields.as_mapping()
+
     def test_a_class_has_closure_and_no_blob(self) -> None:
         claims = [
             claim("py:pkg.mod.C", "exists", "true"),
@@ -122,6 +127,6 @@ class TestAspectsOf:
         assert aspects_of(assemble(METHOD)["py:pkg.mod.C.m"]) == expected
 
     def test_a_bare_symbol_only_exists(self) -> None:
-        assert aspects_of(SymbolFields(kind="attribute", present="true", defined_at="x.py")) == [
-            ("exists", "true")
-        ]
+        assert aspects_of(
+            SymbolFields(kind="attribute", present="true", defined_at="x.py", anchor="a")
+        ) == [("exists", "true")]
