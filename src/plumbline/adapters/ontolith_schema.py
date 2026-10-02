@@ -49,8 +49,11 @@ class Symbol(Concept):
     faithful history of what the code *was* at every commit.
     """
 
-    kind: Text
-    """function | method | class | module | cli_command | env_var | project"""
+    kind: Text = Property(temporality="time_varying")
+    """function | method | class | module | attribute | cli_command | env_var | project.
+
+    `time_varying` (ADR-0004): a function that becomes a class is code history
+    superseding, not a contradiction, and L1 must never open contradictions."""
 
     defined_at: Text = Property(temporality="time_varying")
     """Anchor URI of the current definition; moves on refactor."""

@@ -482,3 +482,39 @@ class TestBoundNames:
     def test_members_of_a_duplicated_class_abstain(self) -> None:
         facts = extract("class C:\n    def m(self): ...\nclass C:\n    x = 1\n")
         assert not [k for k in facts if k[0].startswith("py:pkg.mod.C")]
+
+
+def kinds(source: str, **kwargs: bool) -> dict[str, str]:
+    return {sym: v for (sym, aspect), v in extract(source, **kwargs).items() if aspect == "kind"}
+
+
+class TestKind:
+    """`Symbol.kind` needs a machine-readable value for every symbol (ADR-0004)."""
+
+    def test_each_definition_gets_its_kind(self) -> None:
+        assert kinds("""
+            def f(): ...
+            class C:
+                def m(self): ...
+                x = 1
+                def __init__(self):
+                    self.y = 2
+            z = 3
+        """) == {
+            "py:pkg.mod": "module",
+            "py:pkg.mod.f": "function",
+            "py:pkg.mod.C": "class",
+            "py:pkg.mod.C.m": "method",
+            "py:pkg.mod.C.__init__": "method",
+            "py:pkg.mod.C.x": "attribute",
+            "py:pkg.mod.C.y": "attribute",
+            "py:pkg.mod.z": "attribute",
+        }
+
+    def test_a_rebound_definition_is_an_attribute(self) -> None:
+        assert kinds("def f(): ...\nf = wrap(f)")["py:pkg.mod.f"] == "attribute"
+
+    def test_every_emitted_symbol_has_exactly_one_kind(self) -> None:
+        facts = extract("import os\nclass C:\n    a = 1\ndef f(): ...\n")
+        symbols = {sym for sym, _ in facts}
+        assert symbols == {sym for sym, aspect in facts if aspect == "kind"}
