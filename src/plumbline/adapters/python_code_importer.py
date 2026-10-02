@@ -396,10 +396,22 @@ class PythonCodeImporter:
 
         counts = Counter(d.qualname for d in walker.found)
         unique = [d for d in walker.found if counts[d.qualname] == 1 and self._visible(d.qualname)]
+        ambiguous = {
+            d.qualname: d
+            for d in reversed(walker.found)  # reversed, so the first definition's span wins
+            if counts[d.qualname] > 1 and self._visible(d.qualname)
+        }
+        for qualname, first in sorted(ambiguous.items()):
+            # The name certainly exists, but which definition it is -- and so every
+            # detail fact -- is not knowable. Say so, so absence is never inferred (ADR-0005).
+            key = f"py:{qualname}"
+            node = first.node
+            emit.fact(key, "exists", "true", node.lineno, _end(node), "defined more than once")
+            emit.fact(key, "kind", "ambiguous", node.lineno, _end(node), "defined more than once")
         scopes = {
             d.qualname: _class_scope(d.node) for d in unique if isinstance(d.node, ast.ClassDef)
         }
-        defined = {d.qualname for d in unique}
+        defined = {d.qualname for d in unique} | ambiguous.keys()
 
         module_bound = _bound_names(tree.body)
         self._bound_claims(emit, module, module_bound, defined)
