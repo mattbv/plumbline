@@ -7,7 +7,8 @@ Reads source *text only* -- it never imports or executes the code it is given
     exists, param_names, param.<p>.exists / .default / .type, returns.type,
     raises.<Exc>, deprecated
 
-and deliberately nothing else:
+plus ``kind`` (module/class/function/method/attribute), which `Symbol.kind` needs
+and is not a catalog aspect (ADR-0004), and deliberately nothing else:
 
 * **Absence is not its job.** "This symbol no longer exists" is a fact about
   the *difference* between a snapshot and the KB's current state (PRD §7.7:
@@ -381,6 +382,7 @@ class PythonCodeImporter:
         emit = _Emitter(self._owner, self._repo, path, commit)
         end = _end(tree)
         emit.fact(f"py:{module}", "exists", "true", 1, end, "ast.Module present")
+        emit.fact(f"py:{module}", "kind", "module", 1, end, "ast.Module")
         walker = _Walker(module)
         walker.walk(tree.body, f"{module}.", in_class=False)
         emit.fact(
@@ -432,6 +434,7 @@ class PythonCodeImporter:
             if qualname in defined or not name.isidentifier() or not self._visible(qualname):
                 continue
             emit.fact(f"py:{qualname}", "exists", "true", line, line, "name bound in namespace")
+            emit.fact(f"py:{qualname}", "kind", "attribute", line, line, "name bound in namespace")
 
     def _definition_claims(
         self,
@@ -451,7 +454,10 @@ class PythonCodeImporter:
         start, end = node.lineno, _end(node)
         emit.fact(key, "exists", "true", start, end, f"ast.{type(node).__name__} present")
         if rebound:
+            # The name is also assigned, so it may no longer be this definition.
+            emit.fact(key, "kind", "attribute", start, end, "name also bound by assignment")
             return
+        emit.fact(key, "kind", _kind_of(node, definition.in_class), start, end, "definition kind")
         emit.fact(
             key,
             "deprecated",
@@ -531,6 +537,13 @@ class PythonCodeImporter:
             emit.fact(
                 key, "returns.type", _annotation(node.returns), start, end, "return annotation"
             )
+
+
+def _kind_of(node: _FunctionNode | ast.ClassDef, in_class: bool) -> str:
+    """The `Symbol.kind` of a definition."""
+    if isinstance(node, ast.ClassDef):
+        return "class"
+    return "method" if in_class else "function"
 
 
 def _end(node: ast.AST) -> int:

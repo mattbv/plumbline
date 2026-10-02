@@ -19,12 +19,12 @@ def test_schema_compiles_at_the_version_a_fresh_kb_requires() -> None:
     assert build_schema().version == 1
 
 
-def test_every_symbol_fact_but_kind_is_time_varying(
+def test_every_symbol_fact_is_time_varying(
     symbol_properties: dict[str, dict[str, object]],
 ) -> None:
-    """L1 is code history: code changing is expected, so it supersedes (ADR-0001)."""
+    """L1 is code history: code changing is expected, so it supersedes (ADR-0001/0004)."""
     static = {n for n, p in symbol_properties.items() if p["temporality"] == "static"}
-    assert static == {"kind"}
+    assert static == set()
 
 
 def test_namespace_closed_is_an_optional_boolean(
