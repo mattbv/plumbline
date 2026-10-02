@@ -9,15 +9,19 @@ dependency direction (`application`, `domain`) talks to the `KnowledgeBase`
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 
 from ontolith import Ontology
+from ontolith.core.entity import Entity
+from ontolith.core.errors import CapabilityError
 from ontolith.core.ids import IdProvider
 
 from plumbline.adapters.ontolith_schema import SCHEMA_NAMESPACE, build_schema
 from plumbline.adapters.replay_clock import ReplayClock
-from plumbline.application.ports import RawClaim
+from plumbline.application.ports import ActiveClaim, RawClaim, RetractOutcome
+from plumbline.domain import anchors
 
 CODE_PRINCIPAL = "plumb-code"
 """The `service` principal that writes L1 code facts (PRD §7.6)."""
@@ -33,8 +37,23 @@ class OutOfOrderIngest(RuntimeError):
     """
 
 
+DOC_PRINCIPALS = ("plumb-changelog", "plumb-docs", "plumb-docstring", "plumb-readme")
+"""One `service` principal per documentation source kind (PRD §7.6): provenance can
+then answer which *kind* of source is stale, and a whole kind can be distrusted."""
+
+_PRESENT_CLAIM_STATES = frozenset({"active", "flagged"})
+
 _BOOLEAN_FIELDS = frozenset({"present", "is_deprecated", "namespace_closed"})
 _AUTO_ACCEPTED = "auto_accepted"
+
+
+def _require_auto_accepted(proposal: object, author: str, subject: str) -> None:
+    """Raise unless an importer principal's write landed without review."""
+    state = str(
+        getattr(getattr(proposal, "state", None), "value", getattr(proposal, "state", None))
+    )
+    if state != _AUTO_ACCEPTED:
+        raise RuntimeError(f"{author} write for {subject} was {state}, not auto-accepted")
 
 
 class OntolithKnowledgeBase:
@@ -93,6 +112,14 @@ class OntolithKnowledgeBase:
             default_capability="write",
             author=admin_principal_id,
         )
+        for principal in DOC_PRINCIPALS:
+            kb.create_principal(
+                principal,
+                kind="service",
+                auth_method="workload",
+                default_capability="write",
+                author=admin_principal_id,
+            )
         return cls(kb, clock, replay=replay)
 
     @classmethod
@@ -180,11 +207,108 @@ class OntolithKnowledgeBase:
             )
 
     def record_claim(self, claim: RawClaim, *, author_principal: str, as_of: datetime) -> None:
-        """Write an L2 `Fact.value` claim. Routes through Ontolith's static conflict handling."""
-        raise NotImplementedError(
-            "M1: needs the importer principal registered and the target Fact "
-            "entity resolved/created by its natural key -- see PRD §7.2."
+        """Write an L2 `Fact.value` claim; static single routing decides corroborate or contradict.
+
+        Creates the `Fact` on first use -- with its static ``aspect`` and its
+        ``about`` relation -- and an empty `Symbol` when L1 has never seen the
+        symbol, so a claim about something that does not exist is still recorded
+        (ADR-0006 §4).
+
+        Raises:
+            RuntimeError: The write was not auto-accepted (a misconfigured importer
+                principal), mirroring `record_code_fact`.
+        """
+        if self._replay:
+            self._clock.pin(as_of)
+        fact = self._kb.backend.get_entity_by_natural_key(SCHEMA_NAMESPACE, "Fact", claim.fact_key)
+        if fact is None:
+            fact = self._create_fact(claim, author_principal, as_of)
+        proposal, _decision = self._kb.propose(
+            fact.id,
+            "Fact.value",
+            claim.raw_value,
+            "Text",
+            author_principal,
+            confidence=claim.confidence,
+            source=claim.anchor_uri,
+            rationale=claim.rationale,
+            valid_from=as_of,
         )
+        _require_auto_accepted(proposal, author_principal, claim.fact_key)
+
+    def _create_fact(self, claim: RawClaim, author: str, as_of: datetime) -> Entity:
+        """Create a ``Fact`` with its static aspect and its ``about`` link to the symbol."""
+        symbol = self._kb.backend.get_entity_by_natural_key(
+            SCHEMA_NAMESPACE, "Symbol", claim.symbol_key
+        )
+        if symbol is None:
+            symbol = self._kb.create_entity("Symbol", author, natural_key=claim.symbol_key)
+        fact = self._kb.create_entity("Fact", author, natural_key=claim.fact_key)
+        for proposal, _ in (
+            self._kb.propose(
+                fact.id,
+                "Fact.aspect",
+                claim.aspect,
+                "Text",
+                author,
+                source=claim.anchor_uri,
+                valid_from=as_of,
+            ),
+            self._kb.propose_ref(
+                fact.id, "Fact.about", symbol.id, author, source=claim.anchor_uri, valid_from=as_of
+            ),
+        ):
+            _require_auto_accepted(proposal, author, claim.fact_key)
+        return fact
+
+    def active_claims(
+        self, author_principal: str, paths: Collection[str]
+    ) -> dict[str, list[ActiveClaim]]:
+        """Present claims by ``author_principal`` from each path, in a single KB scan.
+
+        "Present" means active, or flagged because it is a member of an open
+        contradiction. Ontolith cannot filter by author or source, so this reads
+        every `Fact.value` assertion once (~11 µs each, ~0.3 s at 30k claims); a
+        per-document index is the fallback if that ever dominates (ADR-0006).
+        """
+        wanted = set(paths)
+        found: dict[str, list[ActiveClaim]] = {path: [] for path in wanted}
+        for a in self._kb.assertions(predicate="Fact.value", status=None):
+            if (
+                a.author != author_principal
+                or a.valid_to is not None
+                or str(getattr(a.status, "value", a.status)) not in _PRESENT_CLAIM_STATES
+                or a.source is None
+            ):
+                continue
+            try:
+                path = anchors.parse(a.source).path
+            except ValueError:
+                continue
+            if path not in wanted:
+                continue
+            fact = self._kb.get_entity(a.subject)
+            if fact is not None and fact.natural_key is not None:
+                found[path].append(ActiveClaim(a.id, fact.natural_key, str(a.value), path))
+        return found
+
+    def retract_claim(
+        self, claim_id: str, *, author_principal: str, as_of: datetime
+    ) -> RetractOutcome:
+        """Withdraw a claim, unless it is a member of an open contradiction.
+
+        Ontolith refuses a *party* to a contradiction (the claim's own author) with
+        a `CapabilityError`, and would route anyone else to human review. Either
+        way the claim is still in force, which is `DISPUTED` (ADR-0006 §3).
+        """
+        if self._replay:
+            self._clock.pin(as_of)
+        try:
+            proposal, _decision = self._kb.retract(claim_id, author_principal)
+        except CapabilityError:
+            return RetractOutcome.DISPUTED
+        state = str(getattr(proposal.state, "value", proposal.state))
+        return RetractOutcome.RETRACTED if state == _AUTO_ACCEPTED else RetractOutcome.DISPUTED
 
     def close(self) -> None:
         """Close the underlying Ontolith connection."""
