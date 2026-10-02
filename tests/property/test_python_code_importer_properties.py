@@ -60,3 +60,59 @@ def test_arbitrary_bytes_never_crash_the_importer(blob: bytes) -> None:
     """Repository content is untrusted: the importer abstains, it never raises."""
     claims = PythonCodeImporter("o", "r").extract({"src/p/m.py": blob}, COMMIT)
     assert isinstance(claims, list)
+
+
+_names = st.from_regex(r"[a-z][a-z0-9]{0,8}", fullmatch=True).filter(
+    lambda n: (
+        n
+        not in {
+            "if",
+            "in",
+            "is",
+            "or",
+            "as",
+            "del",
+            "for",
+            "def",
+            "not",
+            "and",
+            "try",
+            "with",
+            "from",
+            "pass",
+            "None",
+            "True",
+            "else",
+            "elif",
+            "case",
+            "type",
+            "async",
+            "await",
+            "class",
+            "raise",
+            "while",
+            "yield",
+            "break",
+            "match",
+            "lambda",
+            "global",
+            "assert",
+            "except",
+            "import",
+            "return",
+            "finally",
+            "continue",
+            "nonlocal",
+        }
+    )
+)
+
+
+@given(st.sets(_names, min_size=1, max_size=6))
+def test_every_assigned_public_name_is_listed(names: set[str]) -> None:
+    """A closed namespace must list every name it binds (ADR-0003)."""
+    source = "".join(f"{name} = 1\n" for name in sorted(names)).encode()
+    claims = PythonCodeImporter("o", "r").extract({"src/p/m.py": source}, COMMIT)
+    listed = {c.symbol_key for c in claims if c.aspect == "exists"}
+    assert {f"py:p.m.{n}" for n in names} <= listed
+    assert {c.raw_value for c in claims if c.aspect == "namespace_closed"} == {"true"}

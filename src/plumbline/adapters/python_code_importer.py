@@ -16,6 +16,12 @@ and deliberately nothing else:
   default that is not a plain literal, a symbol defined more than once in a
   module (e.g. in both branches of an ``if``), a file that does not parse.
   Abstaining means emitting *no claim* for that slot.
+* **Closure (ADR-0003).** For modules and classes it also emits
+  ``namespace_closed``: ``true`` only when the member names are fully
+  determined by the source, so the projector may later treat a missing name as
+  *absent* rather than *unknown*. That promise is only sound if every name the
+  namespace binds has been listed, so it also emits ``exists`` for names bound
+  by assignment, import, and ``self.<attr> = ...``, not just ``def``/``class``.
 * ``added_in`` / ``removed_in`` come from the lineage reasoner, and the
   ``cli.*``, ``env.*`` and ``project.*`` aspects are separate importers.
 
@@ -27,6 +33,7 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 
 from plumbline.application.ports import CommitRef, RawClaim
@@ -184,6 +191,156 @@ class _Walker:
                     self.walk(handler.body, prefix, in_class)
 
 
+_ALLOWED_CLASS_DECORATORS = frozenset(
+    {"final", "runtime_checkable", "deprecated", "type_check_only"}
+)
+_NAMESPACE_CALLS = frozenset({"globals", "vars", "locals", "exec", "eval"})
+_OPEN_CLASS_METHODS = frozenset({"__getattr__", "__getattribute__"})
+_RECEIVER_MUTATORS = frozenset({"setattr", "delattr", "vars"})
+
+
+def _scope_nodes(body: Iterable[ast.AST], *, into_classes: bool = False) -> Iterator[ast.AST]:
+    """Nodes that execute *in this namespace*.
+
+    Yields definitions themselves (and what runs at definition time: decorators,
+    defaults, bases) but never descends into function, lambda, or comprehension
+    bodies. A nested class body is entered only with ``into_classes`` -- it runs
+    at import time, but binds names in the *class*, not in this namespace.
+    """
+    stack = list(body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            stack.extend(node.decorator_list)
+            stack.extend(node.args.defaults)
+            stack.extend(d for d in node.args.kw_defaults if d is not None)
+        elif isinstance(node, ast.ClassDef):
+            stack.extend(node.decorator_list)
+            stack.extend(node.bases)
+            stack.extend(k.value for k in node.keywords)
+            if into_classes:
+                stack.extend(node.body)
+        elif not isinstance(
+            node, ast.Lambda | ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+        ):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _bound_names(body: Iterable[ast.AST]) -> dict[str, int]:
+    """Names bound in this namespace by something other than ``def``/``class``, with first line."""
+    found: dict[str, int] = {}
+
+    def bind(name: str, line: int) -> None:
+        found[name] = min(line, found.get(name, line))
+
+    for node in _scope_nodes(body):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            bind(node.id, node.lineno)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                bind(alias.asname or alias.name.split(".")[0], node.lineno)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != "*":
+                    bind(alias.asname or alias.name, node.lineno)
+        elif (isinstance(node, ast.ExceptHandler) and node.name) or (
+            isinstance(node, ast.MatchAs | ast.MatchStar) and node.name
+        ):
+            bind(node.name, node.lineno)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bind(node.rest, node.lineno)
+    return found
+
+
+def _is_namespace_call(node: ast.AST) -> bool:
+    """``globals()``/``vars()``/``locals()``/``exec()``/``eval()``: names chosen at runtime."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _NAMESPACE_CALLS
+    )
+
+
+def _module_is_closed(tree: ast.Module, found: Sequence[_Definition], module: str) -> bool:
+    """Whether the module's attribute names are fully determined by its source (ADR-0003)."""
+    if any(d.qualname == f"{module}.__getattr__" for d in found):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Global):  # binds module names at runtime
+            return False
+        if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
+            return False
+    for node in _scope_nodes(tree.body, into_classes=True):
+        if _is_namespace_call(node):
+            return False
+        if isinstance(node, ast.Subscript) and _dotted(node.value) == "sys.modules":
+            return False
+    return True
+
+
+@dataclass(slots=True)
+class _ClassScope:
+    """A class's closure verdict and the member names it binds."""
+
+    closed: bool
+    names: dict[str, int]
+
+
+def _class_header_is_closed(node: ast.ClassDef) -> bool:
+    """Bases, keywords, and decorators that cannot add or inherit unseen members."""
+    if node.keywords:
+        return False
+    # Any base but `object` may supply inherited members the importer was never
+    # shown -- including an in-file base, until inheritance is modelled (ADR-0003).
+    if any(not (isinstance(b, ast.Name) and b.id == "object") for b in node.bases):
+        return False
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if (_dotted(target) or "").rsplit(".", 1)[-1] not in _ALLOWED_CLASS_DECORATORS:
+            return False
+    return True
+
+
+def _class_scope(node: ast.ClassDef) -> _ClassScope:
+    """Closure verdict for a class, plus every member name it binds (including ``self.x``)."""
+    names = _bound_names(node.body)
+    closed = _class_header_is_closed(node)
+    for member in _scope_nodes(node.body):
+        if _is_namespace_call(member):
+            closed = False  # e.g. `vars()` / `locals()` filling the class body
+        method = member
+        if not isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if method.name in _OPEN_CLASS_METHODS:
+            closed = False
+        decorators = {(_dotted(d) or "").rsplit(".", 1)[-1] for d in method.decorator_list}
+        params = [*method.args.posonlyargs, *method.args.args]
+        if not params or "staticmethod" in decorators:
+            continue
+        receiver = params[0].arg
+        for inner in ast.walk(method):
+            if (
+                isinstance(inner, ast.Attribute)
+                and isinstance(inner.value, ast.Name)
+                and inner.value.id == receiver
+            ):
+                if isinstance(inner.ctx, ast.Store):
+                    names.setdefault(inner.attr, inner.lineno)
+                elif inner.attr == "__dict__":
+                    closed = False
+            elif (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id in _RECEIVER_MUTATORS
+                and inner.args
+                and isinstance(inner.args[0], ast.Name)
+                and inner.args[0].id == receiver
+            ):
+                closed = False  # setattr(self, ...) etc.: names chosen at runtime
+    return _ClassScope(closed, names)
+
+
 class PythonCodeImporter:
     """Implements the `CodeImporter` port for Python source files.
 
@@ -220,29 +377,81 @@ class PythonCodeImporter:
     def _file_claims(
         self, path: str, module: str, tree: ast.Module, commit: CommitRef
     ) -> list[RawClaim]:
-        """All claims for one source file: the module itself plus each unambiguous definition."""
+        """All claims for one source file: the module, its bound names, and each definition."""
         emit = _Emitter(self._owner, self._repo, path, commit)
-        emit.fact(f"py:{module}", "exists", "true", 1, _end(tree), "ast.Module present")
+        end = _end(tree)
+        emit.fact(f"py:{module}", "exists", "true", 1, end, "ast.Module present")
         walker = _Walker(module)
         walker.walk(tree.body, f"{module}.", in_class=False)
+        emit.fact(
+            f"py:{module}",
+            "namespace_closed",
+            canonical.canonical_bool(_module_is_closed(tree, walker.found, module)),
+            1,
+            end,
+            "module attribute names fully determined by source (ADR-0003)",
+        )
 
         counts = Counter(d.qualname for d in walker.found)
-        for definition in walker.found:
-            if counts[definition.qualname] > 1:
-                continue  # defined more than once: ambiguous, abstain
-            if not self._include_private and any(
-                _is_private(part) for part in definition.qualname.split(".")[1:]
-            ):
-                continue
-            self._definition_claims(emit, definition)
+        unique = [d for d in walker.found if counts[d.qualname] == 1 and self._visible(d.qualname)]
+        scopes = {
+            d.qualname: _class_scope(d.node) for d in unique if isinstance(d.node, ast.ClassDef)
+        }
+        defined = {d.qualname for d in unique}
+
+        module_bound = _bound_names(tree.body)
+        self._bound_claims(emit, module, module_bound, defined)
+        for qualname, scope in scopes.items():
+            self._bound_claims(emit, qualname, scope.names, defined)
+
+        for definition in unique:
+            parent, _, name = definition.qualname.rpartition(".")
+            if parent == module:
+                rebound = name in module_bound
+            elif parent in scopes:
+                rebound = name in scopes[parent].names
+            else:
+                continue  # member of an ambiguous or hidden class: abstain
+            self._definition_claims(
+                emit, definition, rebound=rebound, scope=scopes.get(definition.qualname)
+            )
         return emit.claims
 
-    def _definition_claims(self, emit: _Emitter, definition: _Definition) -> None:
-        """Claims for one function, method, or class: existence, deprecation, raises, signature."""
+    def _visible(self, qualname: str) -> bool:
+        """Whether a symbol is emitted at all, given the privacy setting."""
+        if self._include_private:
+            return True
+        return not any(_is_private(part) for part in qualname.split(".")[1:])
+
+    def _bound_claims(
+        self, emit: _Emitter, scope: str, names: dict[str, int], defined: set[str]
+    ) -> None:
+        """``exists`` for names bound by assignment, import, or ``self.x`` (not def/class)."""
+        for name, line in sorted(names.items()):
+            qualname = f"{scope}.{name}"
+            if qualname in defined or not name.isidentifier() or not self._visible(qualname):
+                continue
+            emit.fact(f"py:{qualname}", "exists", "true", line, line, "name bound in namespace")
+
+    def _definition_claims(
+        self,
+        emit: _Emitter,
+        definition: _Definition,
+        *,
+        rebound: bool,
+        scope: _ClassScope | None,
+    ) -> None:
+        """Claims for one function, method, or class.
+
+        A name that is also assigned elsewhere in its namespace (``f = wrap(f)``)
+        may no longer be this definition, so only its existence is claimed.
+        """
         node = definition.node
         key = f"py:{definition.qualname}"
         start, end = node.lineno, _end(node)
         emit.fact(key, "exists", "true", start, end, f"ast.{type(node).__name__} present")
+        if rebound:
+            return
         emit.fact(
             key,
             "deprecated",
@@ -252,6 +461,15 @@ class PythonCodeImporter:
             "deprecation marker (decorator or DeprecationWarning at entry)",
         )
         if isinstance(node, ast.ClassDef):
+            if scope is not None:
+                emit.fact(
+                    key,
+                    "namespace_closed",
+                    canonical.canonical_bool(scope.closed),
+                    start,
+                    end,
+                    "class member names fully determined by source (ADR-0003)",
+                )
             return
         for exc in _raised_exceptions(node):
             emit.fact(key, f"raises.{exc}", "true", start, end, "direct `raise` in body")

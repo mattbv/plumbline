@@ -300,3 +300,185 @@ class TestClaimShape:
         two = importer.extract({"src/pkg/b.py": b, "src/pkg/a.py": a}, COMMIT)
         assert one == two
         assert one == sorted(one, key=lambda c: (c.symbol_key, c.aspect))
+
+
+def closed(source: str, symbol: str = "py:pkg.mod", **kwargs: bool) -> str | None:
+    """The emitted ``namespace_closed`` value for ``symbol`` (None if not emitted)."""
+    return extract(source, **kwargs).get((symbol, "namespace_closed"))
+
+
+class TestModuleClosure:
+    def test_plain_module_is_closed(self) -> None:
+        assert closed("import os\nX = 1\ndef f(): ...\nclass C: ...") == "true"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "def __getattr__(name): raise AttributeError(name)",
+            "from os.path import *",
+            "globals()['dyn'] = 1",
+            "vars().update(a=1)",
+            "locals()['x'] = 1",
+            "exec('x = 1')",
+            "eval('1')",
+            "import sys\nsys.modules[__name__].x = 1",
+            "def register():\n    global dyn\n    dyn = 1",
+            "if X:\n    from a import *",
+        ],
+    )
+    def test_dynamic_constructs_open_the_module(self, source: str) -> None:
+        assert closed(source) == "false"
+
+    def test_dynamic_calls_inside_functions_do_not_run_at_import_time(self) -> None:
+        assert closed("def f():\n    return globals()") == "true"
+
+    def test_dynamic_calls_in_class_bodies_run_at_import_time(self) -> None:
+        """A class body executes on import, so `globals()` there can rewrite the module."""
+        assert closed("class C:\n    globals()['x'] = 1") == "false"
+
+    def test_a_dynamic_class_body_also_opens_the_class(self) -> None:
+        source = "class C:\n    x = vars()\n    locals()['y'] = 1"
+        assert closed(source, "py:pkg.mod.C") == "false"
+
+    def test_package_init_is_a_module_too(self) -> None:
+        assert closed("X = 1", "py:pkg") is None  # path src/pkg/mod.py names pkg.mod
+        facts = extract("X = 1", "src/pkg/__init__.py")
+        assert facts[("py:pkg", "namespace_closed")] == "true"
+
+
+class TestClassClosure:
+    def test_class_without_bases_is_closed(self) -> None:
+        assert closed("class C:\n    x = 1\n    def m(self): ...", "py:pkg.mod.C") == "true"
+
+    def test_explicit_object_base_is_still_closed(self) -> None:
+        assert closed("class C(object): ...", "py:pkg.mod.C") == "true"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "from lib import Base\nclass C(Base): ...",
+            "import abc\nclass C(abc.ABC): ...",
+            "class Base: ...\nclass C(Base): ...",  # in-file base: inherited members unmodelled
+            "class C(metaclass=Meta): ...",
+            "class C(Base, object): ...",
+            "@register\nclass C: ...",
+            "import functools\n@functools.total_ordering\nclass C: ...",
+            "class C:\n    def __getattr__(self, name): ...",
+            "class C:\n    def __getattribute__(self, name): ...",
+            "class C:\n    def __init__(self):\n        setattr(self, 'a', 1)",
+            "class C:\n    def __init__(self):\n        self.__dict__.update(a=1)",
+            "class C:\n    def m(self):\n        vars(self)['a'] = 1",
+        ],
+    )
+    def test_constructs_that_hide_members_open_the_class(self, source: str) -> None:
+        assert closed(source, "py:pkg.mod.C") == "false"
+
+    @pytest.mark.parametrize(
+        "decorator", ["@final", "@typing.final", "@runtime_checkable", "@deprecated('x')"]
+    )
+    def test_allow_listed_decorators_do_not_open_a_class(self, decorator: str) -> None:
+        assert closed(f"{decorator}\nclass C: ...", "py:pkg.mod.C") == "true"
+
+    def test_a_module_can_be_closed_while_a_class_in_it_is_not(self) -> None:
+        source = "from lib import Base\nclass C(Base): ..."
+        assert closed(source) == "true"
+        assert closed(source, "py:pkg.mod.C") == "false"
+
+    def test_duplicate_class_definitions_abstain(self) -> None:
+        source = "class C: ...\nclass C: ..."
+        assert closed(source, "py:pkg.mod.C") is None
+
+    def test_functions_have_no_namespace_fact(self) -> None:
+        assert closed("def f(): ...", "py:pkg.mod.f") is None
+
+
+class TestBoundNames:
+    """A closed namespace must have *every* bound name listed (ADR-0003)."""
+
+    def test_assignments_and_aliases_exist(self) -> None:
+        facts = extract("""
+            def _impl(): ...
+            connect = _impl
+            TIMEOUT: int = 5
+            a, (b, c) = 1, (2, 3)
+        """)
+        for name in ("connect", "TIMEOUT", "a", "b", "c"):
+            assert facts[(f"py:pkg.mod.{name}", "exists")] == "true"
+
+    def test_imports_exist_under_the_bound_name(self) -> None:
+        facts = extract("""
+            import os.path
+            import numpy as np
+            from a.b import c, d as e
+        """)
+        for name in ("os", "np", "c", "e"):
+            assert facts[(f"py:pkg.mod.{name}", "exists")] == "true"
+        assert ("py:pkg.mod.d", "exists") not in facts
+
+    def test_other_binding_forms_exist(self) -> None:
+        facts = extract("""
+            for i in range(3): ...
+            with open('f') as fh: ...
+            try:
+                pass
+            except OSError as err:
+                pass
+            if (n := 5): ...
+            match x:
+                case [first, *rest]: ...
+                case {"k": v, **others}: ...
+        """)
+        for name in ("i", "fh", "err", "n", "first", "rest", "v", "others"):
+            assert facts[(f"py:pkg.mod.{name}", "exists")] == "true", name
+
+    def test_class_attributes_and_instance_attributes_exist(self) -> None:
+        facts = extract("""
+            class C:
+                limit = 5
+                def __init__(self, timeout):
+                    self.timeout = timeout
+                @classmethod
+                def build(cls):
+                    cls.registry = {}
+                @staticmethod
+                def util(x):
+                    x.nope = 1
+        """)
+        for name in ("limit", "timeout", "registry"):
+            assert facts[(f"py:pkg.mod.C.{name}", "exists")] == "true"
+        assert ("py:pkg.mod.C.nope", "exists") not in facts
+
+    def test_comprehension_variables_do_not_leak(self) -> None:
+        facts = extract("xs = [i for i in range(3)]\n")
+        assert ("py:pkg.mod.i", "exists") not in facts
+        assert ("py:pkg.mod.xs", "exists") in facts
+
+    def test_names_bound_only_inside_functions_are_not_module_attributes(self) -> None:
+        facts = extract("def f():\n    local = 1\n")
+        assert ("py:pkg.mod.local", "exists") not in facts
+
+    def test_private_bound_names_follow_the_privacy_setting(self) -> None:
+        assert ("py:pkg.mod._cache", "exists") not in extract("_cache = {}")
+        assert ("py:pkg.mod._cache", "exists") in extract("_cache = {}", include_private=True)
+
+    def test_a_def_that_is_also_assigned_claims_only_existence(self) -> None:
+        facts = extract("""
+            def f(a=1): ...
+            f = wrap(f)
+        """)
+        assert facts[("py:pkg.mod.f", "exists")] == "true"
+        assert ("py:pkg.mod.f", "param_names") not in facts
+        assert ("py:pkg.mod.f", "deprecated") not in facts
+
+    def test_a_method_that_is_also_assigned_in_the_class_claims_only_existence(self) -> None:
+        facts = extract("""
+            class C:
+                def m(self, a=1): ...
+                m = staticmethod(m)
+        """)
+        assert facts[("py:pkg.mod.C.m", "exists")] == "true"
+        assert ("py:pkg.mod.C.m", "param_names") not in facts
+
+    def test_members_of_a_duplicated_class_abstain(self) -> None:
+        facts = extract("class C:\n    def m(self): ...\nclass C:\n    x = 1\n")
+        assert not [k for k in facts if k[0].startswith("py:pkg.mod.C")]
