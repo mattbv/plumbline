@@ -57,6 +57,13 @@ class FakeKnowledgeBase:
         fields = self.symbols.get(symbol_key)
         return None if fields is None else dict(fields)
 
+    def symbols_defined_in(self, path: str) -> list[str]:
+        return sorted(
+            key
+            for key, fields in self.symbols.items()
+            if fields.get("defined_at") == path and fields.get("present") == "true"
+        )
+
     def record_code_fact(
         self, symbol_key: str, field: str, value: str, *, as_of: datetime, source: str
     ) -> None:
@@ -97,6 +104,7 @@ def _use_case(
         code_importer=FakeCodeImporter(claims),
         doc_importers=docs,
         kb=kb,
+        repo_slug="o/r",
     )
 
 
@@ -182,6 +190,7 @@ class TestFiles:
             code_importer=importer,
             doc_importers=(),
             kb=FakeKnowledgeBase(),
+            repo_slug="o/r",
         )
         use_case.run(_commit(changed=("a.py", "deleted.py")))
         assert importer.seen == [{"a.py": b"x = 1\n"}]

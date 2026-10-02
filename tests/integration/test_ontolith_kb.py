@@ -61,3 +61,47 @@ def test_doc_claims_are_not_implemented_yet(tmp_path: Path) -> None:
     claim = RawClaim("py:m.f#exists", "exists", "true", SOURCE, 0.9, "t")
     with pytest.raises(NotImplementedError):
         _kb(tmp_path / "kb.db").record_claim(claim, author_principal="plumb-readme", as_of=WHEN)
+
+
+class TestSymbolsDefinedIn:
+    """The path -> symbols lookup that removal detection rests on (ADR-0005)."""
+
+    def _write(
+        self,
+        kb: OntolithKnowledgeBase,
+        key: str,
+        path: str,
+        *,
+        present: str = "true",
+        at: datetime = WHEN,
+    ) -> None:
+        kb.record_code_fact(key, "defined_at", path, as_of=at, source=SOURCE)
+        kb.record_code_fact(key, "present", present, as_of=at, source=SOURCE)
+
+    def test_lists_exactly_the_present_symbols_of_that_path_sorted(self, tmp_path: Path) -> None:
+        kb = _kb(tmp_path / "kb.db")
+        self._write(kb, "py:m.b", "src/m.py")
+        self._write(kb, "py:m.a", "src/m.py")
+        self._write(kb, "py:other.x", "src/other.py")
+        assert kb.symbols_defined_in("src/m.py") == ["py:m.a", "py:m.b"]
+
+    def test_excludes_removed_symbols(self, tmp_path: Path) -> None:
+        kb = _kb(tmp_path / "kb.db")
+        self._write(kb, "py:m.a", "src/m.py")
+        self._write(kb, "py:m.gone", "src/m.py")
+        kb.record_code_fact(
+            "py:m.gone", "present", "false", as_of=WHEN.replace(hour=5), source=SOURCE
+        )
+        assert kb.symbols_defined_in("src/m.py") == ["py:m.a"]
+
+    def test_a_symbol_that_moved_is_listed_under_its_new_path_only(self, tmp_path: Path) -> None:
+        kb = _kb(tmp_path / "kb.db")
+        self._write(kb, "py:m.a", "src/old.py")
+        kb.record_code_fact(
+            "py:m.a", "defined_at", "src/new.py", as_of=WHEN.replace(hour=5), source=SOURCE
+        )
+        assert kb.symbols_defined_in("src/old.py") == []
+        assert kb.symbols_defined_in("src/new.py") == ["py:m.a"]
+
+    def test_an_unknown_path_has_no_symbols(self, tmp_path: Path) -> None:
+        assert _kb(tmp_path / "kb.db").symbols_defined_in("nope.py") == []
