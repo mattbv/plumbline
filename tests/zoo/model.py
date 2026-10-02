@@ -73,6 +73,9 @@ class Commit:
         delete: Paths removed in this commit.
         tag: If set, a release tag `<scenario_id>/v<tag>` is created here
             (the PRD's `Release` entities come from tags, ING-9).
+        broken: Python files in ``write`` that are *intentionally* not valid
+            syntax (a half-typed edit). The linter checks they really fail to
+            parse, and that every other Python file does.
     """
 
     label: str
@@ -80,6 +83,7 @@ class Commit:
     write: Mapping[str, str] = field(default_factory=dict)
     delete: tuple[str, ...] = ()
     tag: str | None = None
+    broken: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +141,31 @@ class ClosureExpectation:
 
 
 @dataclass(frozen=True, slots=True)
+class StateExpectation:
+    """What the KB must say about a symbol's L1 state after a commit is ingested (ADR-0005).
+
+    Unlike `Expectation` this is a statement about the *stored* state, so it can
+    express removal (``present=False``) and, just as importantly, "left alone"
+    (still ``present=True`` after a file stopped parsing).
+
+    Attributes:
+        commit: Label of the commit after which the state is observed.
+        symbol: Symbol key, e.g. ``py:pkg.mod.f``.
+        present: Expected ``Symbol.present``.
+        kind: Expected ``Symbol.kind``, if it matters for the scenario.
+        defined_at: Expected ``Symbol.defined_at`` relative to the scenario root.
+        note: Why this is right.
+    """
+
+    commit: str
+    symbol: str
+    present: bool
+    kind: str | None = None
+    defined_at: str | None = None
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Scenario:
     """A seeded, labeled drift scenario.
 
@@ -148,6 +177,7 @@ class Scenario:
         commits: The history, oldest first.
         expectations: The labeled outcomes.
         closures: Expected ``namespace_closed`` values (ADR-0003).
+        states: Expected stored L1 state, including removal (ADR-0005).
     """
 
     id: str
@@ -156,6 +186,7 @@ class Scenario:
     commits: tuple[Commit, ...]
     expectations: tuple[Expectation, ...]
     closures: tuple[ClosureExpectation, ...] = ()
+    states: tuple[StateExpectation, ...] = ()
 
     def commit_index(self, label: str) -> int:
         """Return the position of the commit named `label`.

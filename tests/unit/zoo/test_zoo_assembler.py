@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from plumbline.application.symbol_facts import SymbolFields, aspects_of, assemble
+from plumbline.domain import anchors
 from tests.zoo.importing import claims_at
 from tests.zoo.model import Layer, Scenario
 from tests.zoo.scenarios import ALL
@@ -25,11 +26,16 @@ def _fields(scenario: Scenario, label: str) -> dict[str, SymbolFields]:
     ("scenario", "label"), _COMMITS, ids=[f"{s.id}@{lb}" for s, lb in _COMMITS]
 )
 def test_every_snapshot_assembles_and_round_trips(scenario: Scenario, label: str) -> None:
+    """The assembled fields stand for exactly the claims of the path that owns each key."""
     claims = claims_at(scenario, label)
     fields = assemble(claims)
     for symbol, record in fields.items():
         original = sorted(
-            (c.aspect, c.raw_value) for c in claims if c.symbol_key == symbol and c.aspect != "kind"
+            (c.aspect, c.raw_value)
+            for c in claims
+            if c.symbol_key == symbol
+            and c.aspect != "kind"
+            and anchors.parse(c.anchor_uri).path == record.defined_at
         )
         assert aspects_of(record) == original, symbol
 

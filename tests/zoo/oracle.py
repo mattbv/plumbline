@@ -26,6 +26,7 @@ from .model import (
     Layer,
     Outcome,
     Scenario,
+    StateExpectation,
 )
 
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -145,6 +146,44 @@ def _lint_closure(scenario: Scenario, index: int, closure: ClosureExpectation) -
     return _symbol_problems(scenario, where, closure.commit, closure.symbol)
 
 
+_STATE_KINDS = frozenset({"module", "class", "function", "method", "attribute", "ambiguous"})
+
+
+def _module_ever_existed(scenario: Scenario, commit: str, path: list[str]) -> bool:
+    """Whether some prefix of the dotted path was a module file at or before `commit`."""
+    upto = scenario.commit_index(commit)
+    for label in (c.label for c in scenario.commits[: upto + 1]):
+        files = scenario.files_at(label)
+        for length in range(len(path), 0, -1):
+            base = "/".join(path[:length])
+            if any(
+                f"{root}{base}{tail}" in files
+                for root in ("", "src/")
+                for tail in (".py", "/__init__.py")
+            ):
+                return True
+    return False
+
+
+def _lint_state(scenario: Scenario, index: int, state: StateExpectation) -> list[str]:
+    where = f"{scenario.id} state #{index} ({state.symbol} @ {state.commit})"
+    if state.commit not in [c.label for c in scenario.commits]:
+        return [f"{where}: unknown commit {state.commit!r}"]
+    if not state.symbol.startswith("py:"):
+        return [f"{where}: only Python symbols have stored L1 state here"]
+    problems: list[str] = []
+    path = state.symbol.removeprefix("py:").split(".")
+    if path[0] != scenario.id:
+        problems.append(f"{where}: symbol must start with the scenario id")
+    elif not _module_ever_existed(scenario, state.commit, path):
+        problems.append(f"{where}: no module for this symbol existed by {state.commit}")
+    if state.kind is not None and state.kind not in _STATE_KINDS:
+        problems.append(f"{where}: unknown kind {state.kind!r}")
+    if state.defined_at is not None and not state.present:
+        problems.append(f"{where}: defined_at is only meaningful for a present symbol")
+    return problems
+
+
 def _lint_expectation(scenario: Scenario, index: int, exp: Expectation) -> list[str]:
     where = f"{scenario.id} expectation #{index} ({exp.symbol}#{exp.aspect} @ {exp.commit})"
     problems: list[str] = []
@@ -214,7 +253,7 @@ def lint(scenario: Scenario) -> list[str]:
         problems.append(f"{scenario.id}: id must be a lowercase Python identifier")
     if not scenario.commits:
         problems.append(f"{scenario.id}: no commits")
-    if not scenario.expectations:
+    if not (scenario.expectations or scenario.closures or scenario.states):
         problems.append(f"{scenario.id}: no expectations")
     labels = [c.label for c in scenario.commits]
     if len(labels) != len(set(labels)):
@@ -229,13 +268,23 @@ def lint(scenario: Scenario) -> list[str]:
 
     for commit in scenario.commits:
         for path, text in scenario.files_at(commit.label).items():
-            if path.endswith(".py"):
-                try:
-                    ast.parse(text)
-                except SyntaxError as err:
+            if not path.endswith(".py"):
+                continue
+            intentionally_broken = path in commit.broken
+            try:
+                ast.parse(text)
+            except SyntaxError as err:
+                if not intentionally_broken and path in commit.write:
                     problems.append(f"{scenario.id}@{commit.label}: {path} does not parse: {err}")
+            else:
+                if intentionally_broken:
+                    problems.append(
+                        f"{scenario.id}@{commit.label}: {path} is marked broken but parses"
+                    )
     for index, exp in enumerate(scenario.expectations):
         problems.extend(_lint_expectation(scenario, index, exp))
     for index, closure in enumerate(scenario.closures):
         problems.extend(_lint_closure(scenario, index, closure))
+    for index, state in enumerate(scenario.states):
+        problems.extend(_lint_state(scenario, index, state))
     return problems
