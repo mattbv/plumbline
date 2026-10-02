@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -77,9 +77,10 @@ projected outcomes and goes through an amendment to this ADR.
 
 - **A. `Symbol.namespace_closed` L1 field (proposed).** Versioned with the
   code, reproducible on replay, readable through flat `assertions()`, and
-  consistent with how `present` and `is_deprecated` already work. Costs one
-  schema version bump; Plumbline has no deployed KBs yet, so the migration
-  cost is lowest now and grows later.
+  consistent with how `present` and `is_deprecated` already work. Costs one optional
+  `Symbol` property; because Plumbline has no deployed KBs yet it is added to
+  schema v1 in place, which is only possible before the first release (see
+  Consequences).
 - **B. An internal entry in the aspect catalog.** Rejected: the catalog
   describes facets that *documentation* can state and that become `Fact`
   slots; "this namespace is closed" is something no doc claims and no slot
@@ -97,8 +98,14 @@ projected outcomes and goes through an amendment to this ADR.
 
 ## Consequences
 
-- One `Symbol` schema version bump (`namespace_closed`), recorded in the
-  schema history; schema versions are never deleted (PRD/Ontolith invariant).
+- `Symbol` gains an optional `namespace_closed` property. Ontolith requires
+  monotonic schema versions and a fresh KB must start at version 1, so a
+  version bump would have meant keeping v1 and shipping a migration chain.
+  Plumbline has not been released and no KB exists outside development, so the
+  field is added to v1 in place. From the first release on, a change like this
+  needs a new version and a migration chain. (An earlier draft of this ADR
+  assumed a simple bump; the monotonic-version rule was found while
+  implementing it.)
 - The code importer gains a closure analysis (pure AST, no I/O), with its own
   unit and property tests.
 - The drift zoo gains scenarios, one per rule plus a closed-module positive
