@@ -62,6 +62,16 @@ parsing must not look like a deleted file). A `Commit` can mark a Python file as
 `broken=` when it is intentionally not valid syntax; the linter then checks that it
 really fails to parse, and that every other Python file does.
 
+## Claim expectations
+
+A `ClaimsExpectation` labels the doc claims the KB must hold as *present* on a fact after
+a commit. Unlike an L2 `Expectation` it needs no module to exist at that commit (so it can
+say "the file was deleted, so its claims are gone") and no code projection (so it checks
+the claim protocol on its own). `claims` are `(importer principal, value)` pairs; only
+principals the pipeline has importers for are compared. The L2 `Expectation` labels are
+checked the same way for the docstring principal, so every labeled docstring claim in the
+older scenarios is now verified against the real KB too.
+
 ## Adding a scenario
 
 1. Pick the PRD section or requirement it exercises and put it in `prd_refs`.

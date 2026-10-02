@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from ontolith.core.ids import SequentialIdProvider
 
+from plumbline.adapters.docstring_claim_importer import DocstringClaimImporter
 from plumbline.adapters.ontolith_kb import OntolithKnowledgeBase, OutOfOrderIngest
 from plumbline.adapters.python_code_importer import PythonCodeImporter
 from plumbline.application.symbol_facts import assemble
@@ -43,7 +44,7 @@ def _ingest(kb: OntolithKnowledgeBase, steps: int | None = None) -> None:
     use_case = IngestOneCommit(
         repo=HISTORY,
         code_importer=PythonCodeImporter("zoo", "zoo"),
-        doc_importers=(),
+        doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
         kb=kb,
         repo_slug="o/r",
     )
@@ -173,7 +174,7 @@ class TestIdempotenceAndDeterminism:
         use_case = IngestOneCommit(
             repo=HISTORY,
             code_importer=PythonCodeImporter("zoo", "zoo"),
-            doc_importers=(),
+            doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
             kb=kb,
             repo_slug="o/r",
         )
@@ -191,7 +192,7 @@ class TestIdempotenceAndDeterminism:
         use_case = IngestOneCommit(
             repo=HISTORY,
             code_importer=PythonCodeImporter("zoo", "zoo"),
-            doc_importers=(),
+            doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
             kb=kb,
             repo_slug="o/r",
         )
@@ -222,7 +223,7 @@ class TestLiveMode:
         use_case = IngestOneCommit(
             repo=history,
             code_importer=PythonCodeImporter("zoo", "zoo"),
-            doc_importers=(),
+            doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
             kb=kb,
             repo_slug="o/r",
         )

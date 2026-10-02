@@ -166,6 +166,24 @@ class StateExpectation:
 
 
 @dataclass(frozen=True, slots=True)
+class ClaimsExpectation:
+    """The doc claims the KB must hold as *present* on a fact after a commit (ADR-0006).
+
+    Unlike an L2 `Expectation` this needs no module to exist at that commit, so it
+    can say "the file was deleted, so its claims are gone", and no code projection,
+    so it checks the claim protocol on its own. ``claims`` are
+    ``(importer principal, canonical value)`` pairs; only the principals the
+    pipeline actually has importers for are compared.
+    """
+
+    commit: str
+    symbol: str
+    aspect: str
+    claims: tuple[tuple[str, str], ...]
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Scenario:
     """A seeded, labeled drift scenario.
 
@@ -178,6 +196,7 @@ class Scenario:
         expectations: The labeled outcomes.
         closures: Expected ``namespace_closed`` values (ADR-0003).
         states: Expected stored L1 state, including removal (ADR-0005).
+        claim_states: Expected present doc claims, including after deletion (ADR-0006).
     """
 
     id: str
@@ -187,6 +206,7 @@ class Scenario:
     expectations: tuple[Expectation, ...]
     closures: tuple[ClosureExpectation, ...] = ()
     states: tuple[StateExpectation, ...] = ()
+    claim_states: tuple[ClaimsExpectation, ...] = ()
 
     def commit_index(self, label: str) -> int:
         """Return the position of the commit named `label`.

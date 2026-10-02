@@ -20,6 +20,7 @@ from plumbline.domain.aspects import Aspect, ValueShape
 
 from .model import (
     DOC_PRINCIPALS,
+    ClaimsExpectation,
     ClosureExpectation,
     DriftClass,
     Expectation,
@@ -184,6 +185,30 @@ def _lint_state(scenario: Scenario, index: int, state: StateExpectation) -> list
     return problems
 
 
+def _lint_claims(scenario: Scenario, index: int, expected: ClaimsExpectation) -> list[str]:
+    where = (
+        f"{scenario.id} claims #{index} ({expected.symbol}#{expected.aspect} @ {expected.commit})"
+    )
+    if expected.commit not in [c.label for c in scenario.commits]:
+        return [f"{where}: unknown commit {expected.commit!r}"]
+    problems: list[str] = []
+    path = expected.symbol.removeprefix("py:").split(".")
+    if not expected.symbol.startswith("py:") or path[0] != scenario.id:
+        problems.append(f"{where}: symbol must be 'py:<id>.…'")
+    elif not _module_ever_existed(scenario, expected.commit, path):
+        problems.append(f"{where}: no module for this symbol existed by {expected.commit}")
+    aspect = resolve_aspect(expected.aspect)
+    if aspect is None:
+        problems.append(f"{where}: aspect is not in the catalog")
+    else:
+        for principal, value in expected.claims:
+            if principal not in DOC_PRINCIPALS:
+                problems.append(f"{where}: {principal!r} is not a doc-claim importer principal")
+            elif why := value_problem(aspect, value):
+                problems.append(f"{where}: claim by {principal} {value!r}: {why}")
+    return problems
+
+
 def _lint_expectation(scenario: Scenario, index: int, exp: Expectation) -> list[str]:
     where = f"{scenario.id} expectation #{index} ({exp.symbol}#{exp.aspect} @ {exp.commit})"
     problems: list[str] = []
@@ -253,7 +278,7 @@ def lint(scenario: Scenario) -> list[str]:
         problems.append(f"{scenario.id}: id must be a lowercase Python identifier")
     if not scenario.commits:
         problems.append(f"{scenario.id}: no commits")
-    if not (scenario.expectations or scenario.closures or scenario.states):
+    if not (scenario.expectations or scenario.closures or scenario.states or scenario.claim_states):
         problems.append(f"{scenario.id}: no expectations")
     labels = [c.label for c in scenario.commits]
     if len(labels) != len(set(labels)):
@@ -287,4 +312,6 @@ def lint(scenario: Scenario) -> list[str]:
         problems.extend(_lint_closure(scenario, index, closure))
     for index, state in enumerate(scenario.states):
         problems.extend(_lint_state(scenario, index, state))
+    for index, expected in enumerate(scenario.claim_states):
+        problems.extend(_lint_claims(scenario, index, expected))
     return problems
