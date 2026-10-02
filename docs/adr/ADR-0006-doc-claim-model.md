@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -157,7 +157,12 @@ exception the use case would have to string-match.
 - PRD §7.7's note on disputed retractions is corrected: a party's retraction is
   refused, not routed. This ADR is where that correction is recorded.
 
-## Open questions for you
+## Open questions (resolved)
+
+All five recommendations were accepted as written: deferral during a dispute; the
+re-affirm pass belongs to M2; empty `Symbol` entities for symbols L1 has never seen;
+provenance in `rationale`; and docstring plus fully qualified references first, so no
+resolver is needed yet.
 
 1. **Deferral during a dispute** (neither retract nor assert), rather than
    asserting the new value anyway. I recommend deferral. The cost is that the
@@ -171,3 +176,26 @@ exception the use case would have to string-match.
 5. **Resolution of prose references is a separate decision** (with an `alias_of`
    field for re-exports). OK to start with docstring and fully qualified
    references, where no resolver is needed?
+
+## Amendment 1: what implementing it showed
+
+- **The port is wider than §7 said.** To retract a deleted file's claims the use case
+  must know which importer owns a path, and to avoid inferring removal from silence it
+  must know which paths were actually analyzed. So `DocImporter` gains `principal` and
+  `handles(path)`, and `extract` returns a `DocExtraction` (claims plus
+  `analyzed_paths`) rather than a bare list.
+- **Claims are fetched in one scan per commit.** Ontolith cannot filter assertions by
+  author or source, so `active_claims(author, paths)` reads every `Fact.value`
+  assertion once. Measured: about 11 microseconds each, 33 ms for 3,000 and so roughly
+  0.3 s at 30k claims. Asking per path would multiply that by the number of changed
+  documents, which is why the port takes all of a commit's paths at once. A per-document
+  index remains the fallback if the single scan ever dominates.
+- **A parameter listed twice is not dropped wholesale.** The docstring importer keeps
+  what its listings agree on (the parameter exists) and drops only the aspects they
+  disagree about (a conflicting type). Dropping the whole parameter lost agreed facts
+  for no gain in precision.
+- **Section labels are not types.** A line such as `Note: see below` after `Returns:`
+  parses as a type name; labels like Note, Example and Warning are rejected explicitly.
+- **PRD §7.7 correction, confirmed against a real KB.** An importer cannot retract its
+  own claim once it is a member of an open contradiction (it is a party, and Ontolith
+  raises). The protocol's deferral, tested end to end, is the answer.

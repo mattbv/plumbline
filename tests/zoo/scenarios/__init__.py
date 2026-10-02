@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..model import Scenario
-from . import abstention, closure, history, removal, signatures
+from . import abstention, closure, docclaims, history, removal, signatures
 
 ALL: tuple[Scenario, ...] = (
     *signatures.SCENARIOS,
@@ -11,4 +11,5 @@ ALL: tuple[Scenario, ...] = (
     *history.SCENARIOS,
     *closure.SCENARIOS,
     *removal.SCENARIOS,
+    *docclaims.SCENARIOS,
 )

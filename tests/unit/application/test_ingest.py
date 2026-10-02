@@ -4,10 +4,18 @@ principle, applied one layer up)."""
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import UTC, datetime
 
-from plumbline.application.ports import CommitRef, RawClaim
+from plumbline.application.ports import (
+    ActiveClaim,
+    CommitRef,
+    DocExtraction,
+    RawClaim,
+    RetractOutcome,
+)
 from plumbline.application.use_cases.ingest import IngestOneCommit
+from plumbline.domain import anchors
 
 SHA = "abcdef0123456789abcdef0123456789abcdef01"
 WHEN = datetime(2026, 1, 1, tzinfo=UTC)
@@ -38,20 +46,44 @@ class FakeCodeImporter:
 
 
 class FakeDocImporter:
-    def __init__(self, claims: list[RawClaim]) -> None:
-        self._claims = claims
+    """A doc importer that returns staged claims for the paths it is told it analyzed."""
 
-    def extract(self, files: dict[str, bytes], commit: CommitRef) -> list[RawClaim]:
-        return self._claims
+    def __init__(
+        self,
+        claims: list[RawClaim] | None = None,
+        *,
+        principal: str = "plumb-readme",
+        suffix: str = ".md",
+        analyzed: frozenset[str] | None = None,
+    ) -> None:
+        self.claims = claims or []
+        self.principal = principal
+        self.suffix = suffix
+        self.analyzed = analyzed
+
+    def handles(self, path: str) -> bool:
+        return path.endswith(self.suffix)
+
+    def extract(self, files: dict[str, bytes], commit: CommitRef) -> DocExtraction:
+        analyzed = (
+            self.analyzed
+            if self.analyzed is not None
+            else frozenset(p for p in files if self.handles(p))
+        )
+        return DocExtraction(list(self.claims), analyzed)
 
 
 class FakeKnowledgeBase:
-    """Remembers writes, and answers `symbol_fields` from them like a real KB would."""
+    """Remembers writes, and answers reads from them like a real KB would."""
 
     def __init__(self, existing: dict[str, dict[str, str]] | None = None) -> None:
         self.symbols: dict[str, dict[str, str]] = dict(existing or {})
         self.writes: list[tuple[str, str, str, datetime, str]] = []
-        self.claims: list[RawClaim] = []
+        self.claims: list[RawClaim] = []  # every claim ever recorded, in order
+        self.events: list[tuple[str, str]] = []  # ("assert"|"retract", fact_key), in order
+        self.stored: dict[str, tuple[str, str, str, str]] = {}  # id -> author, fact, value, path
+        self.disputed_facts: set[str] = set()
+        self._next = 0
 
     def symbol_fields(self, symbol_key: str) -> dict[str, str] | None:
         fields = self.symbols.get(symbol_key)
@@ -71,7 +103,30 @@ class FakeKnowledgeBase:
         self.symbols.setdefault(symbol_key, {})[field] = value
 
     def record_claim(self, claim: RawClaim, *, author_principal: str, as_of: datetime) -> None:
+        self._next += 1
+        path = anchors.parse(claim.anchor_uri).path
+        self.stored[f"c{self._next}"] = (author_principal, claim.fact_key, claim.raw_value, path)
         self.claims.append(claim)
+        self.events.append(("assert", claim.fact_key))
+
+    def active_claims(
+        self, author_principal: str, paths: Collection[str]
+    ) -> dict[str, list[ActiveClaim]]:
+        found: dict[str, list[ActiveClaim]] = {path: [] for path in paths}
+        for claim_id, (author, fact, value, path) in self.stored.items():
+            if author == author_principal and path in found:
+                found[path].append(ActiveClaim(claim_id, fact, value, path))
+        return found
+
+    def retract_claim(
+        self, claim_id: str, *, author_principal: str, as_of: datetime
+    ) -> RetractOutcome:
+        fact = self.stored[claim_id][1]
+        if fact in self.disputed_facts:
+            return RetractOutcome.DISPUTED
+        del self.stored[claim_id]
+        self.events.append(("retract", fact))
+        return RetractOutcome.RETRACTED
 
 
 def _commit(*, changed: tuple[str, ...] = ("README.md",)) -> CommitRef:
@@ -194,35 +249,3 @@ class TestFiles:
         )
         use_case.run(_commit(changed=("a.py", "deleted.py")))
         assert importer.seen == [{"a.py": b"x = 1\n"}]
-
-
-class TestDocClaims:
-    def test_writes_doc_claims_from_every_doc_importer(self) -> None:
-        readme_claim = RawClaim(
-            symbol_key="py:acme.Client.connect#param.timeout.default",
-            aspect="param.timeout.default",
-            raw_value="30",
-            anchor_uri="repo://acme/sdk@abc123/README.md#L88-L91",
-            confidence=0.9,
-            rationale="md.table:config-defaults row 'timeout'",
-        )
-        changelog_claim = RawClaim(
-            symbol_key="py:acme.Client.connect#added_in",
-            aspect="added_in",
-            raw_value="1.0",
-            anchor_uri="repo://acme/sdk@abc123/CHANGELOG.md#L1-L1",
-            confidence=0.9,
-            rationale="keep-a-changelog",
-        )
-        kb = FakeKnowledgeBase()
-        use_case = _use_case(
-            kb,
-            [],
-            files={"README.md": b"", "CHANGELOG.md": b""},
-            docs=(FakeDocImporter([readme_claim]), FakeDocImporter([changelog_claim])),
-        )
-
-        use_case.run(_commit(changed=("README.md", "CHANGELOG.md")))
-
-        assert kb.claims == [readme_claim, changelog_claim]
-        assert kb.writes == []

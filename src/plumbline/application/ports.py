@@ -10,8 +10,10 @@ to Ontolith's `StorageBackend`/`Clock` ports is the precedent this follows).
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Protocol
 
 
@@ -25,6 +27,11 @@ class RawClaim:
     anchor_uri: str
     confidence: float
     rationale: str
+
+    @property
+    def fact_key(self) -> str:
+        """The `Fact` natural key this claim is about: ``<symbol_key>#<aspect>`` (PRD §7.2)."""
+        return f"{self.symbol_key}#{self.aspect}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,12 +79,59 @@ class CodeImporter(Protocol):
         ...
 
 
-class DocImporter(Protocol):
-    """Extracts doc claims from one kind of documentation source (PRD ING-2/3/4)."""
+@dataclass(frozen=True, slots=True)
+class DocExtraction:
+    """What a doc importer found, and which paths it actually analyzed.
 
-    def extract(self, files: dict[str, bytes], commit: CommitRef) -> list[RawClaim]:
-        """Return the doc claims found in these files at this commit."""
+    Knowing which paths were *analyzed* is what lets the apply protocol retract a
+    claim the document no longer makes without ever inferring removal from a file
+    the importer could not read (ADR-0006, reusing ADR-0005's reasoning).
+
+    Attributes:
+        claims: Resolved claims, each with a known ``symbol_key``.
+        analyzed_paths: Paths the importer successfully analyzed this commit,
+            including those that now yield no claims.
+    """
+
+    claims: list[RawClaim]
+    analyzed_paths: frozenset[str]
+
+
+class DocImporter(Protocol):
+    """Extracts doc claims from one kind of documentation source (PRD ING-2/3/4).
+
+    Pure: a function of the files it is given. It emits claims with a resolved
+    ``symbol_key`` or nothing at all -- it never guesses (ADR-0006).
+    """
+
+    principal: str
+    """The per-source-kind `service` principal that authors this importer's claims."""
+
+    def handles(self, path: str) -> bool:
+        """Whether ``path`` is a document this importer owns (used for deleted files)."""
         ...
+
+    def extract(self, files: dict[str, bytes], commit: CommitRef) -> DocExtraction:
+        """Return the claims in these files at this commit, and which paths were analyzed."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveClaim:
+    """One present doc claim in the KB (active, or flagged in an open dispute)."""
+
+    claim_id: str
+    fact_key: str
+    value: str
+    path: str
+
+
+class RetractOutcome(StrEnum):
+    """Result of asking the KB to withdraw a claim (ADR-0006 §3)."""
+
+    RETRACTED = "retracted"
+    DISPUTED = "disputed"
+    """The claim is a member of an open contradiction; its author may not withdraw it."""
 
 
 class KnowledgeBase(Protocol):
@@ -117,7 +171,26 @@ class KnowledgeBase(Protocol):
         ...
 
     def record_claim(self, claim: RawClaim, *, author_principal: str, as_of: datetime) -> None:
-        """Write an L2 `Fact.value` claim -- routes through static conflict handling."""
+        """Write an L2 `Fact.value` claim -- routes through static conflict handling.
+
+        Creates the `Fact` (and an empty `Symbol` it is about, if L1 has never seen
+        it) on first use.
+        """
+        ...
+
+    def active_claims(
+        self, author_principal: str, paths: Collection[str]
+    ) -> dict[str, list[ActiveClaim]]:
+        """Present claims authored by ``author_principal`` from each of ``paths``.
+
+        One call covers a whole commit's paths so the KB is scanned once.
+        """
+        ...
+
+    def retract_claim(
+        self, claim_id: str, *, author_principal: str, as_of: datetime
+    ) -> RetractOutcome:
+        """Withdraw a claim, or report that it is disputed and cannot be withdrawn by its author."""
         ...
 
 

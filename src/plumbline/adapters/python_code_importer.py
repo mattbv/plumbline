@@ -34,80 +34,42 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
-from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 
+from plumbline.adapters._pysource import (
+    Definition as _Definition,
+)
+from plumbline.adapters._pysource import (
+    FunctionNode as _FunctionNode,
+)
+from plumbline.adapters._pysource import (
+    Walker as _Walker,
+)
+from plumbline.adapters._pysource import (
+    annotation as _annotation,
+)
+from plumbline.adapters._pysource import (
+    bound_names as _bound_names,
+)
+from plumbline.adapters._pysource import (
+    dotted as _dotted,
+)
+from plumbline.adapters._pysource import (
+    is_private as _is_private,
+)
+from plumbline.adapters._pysource import (
+    module_name as _module_name,
+)
+from plumbline.adapters._pysource import (
+    scope_nodes as _scope_nodes,
+)
 from plumbline.application.ports import CommitRef, RawClaim
 from plumbline.domain import canonical
 from plumbline.domain.anchors import Anchor
 
 _EXTRACTOR_CONFIDENCE = 1.0
 """Static analysis of the syntax tree: fidelity is certain; only *truth* is in question."""
-
-_FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
-_TYPING_MODULES = ("typing.", "typing_extensions.")
-
-
-def _is_private(name: str) -> bool:
-    """Single/double-underscore names are private; dunders like ``__init__`` are not."""
-    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
-
-
-def _module_name(path: str) -> str | None:
-    """Dotted module name for a source path, or ``None`` if it is not Python source.
-
-    Everything up to and including the first ``src`` directory is dropped
-    (src layout); otherwise the path is taken as-is (flat layout).
-    """
-    if not path.endswith(".py"):
-        return None
-    parts = path.removesuffix(".py").split("/")
-    if "src" in parts[:-1]:
-        parts = parts[parts.index("src") + 1 :]
-    if parts and parts[-1] == "__init__":
-        parts = parts[:-1]
-    if not parts or not all(part.isidentifier() for part in parts):
-        return None
-    return ".".join(parts)
-
-
-def _dotted(node: ast.expr) -> str | None:
-    """``a.b.c`` for a pure Name/Attribute chain, else ``None``."""
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        base = _dotted(node.value)
-        return None if base is None else f"{base}.{node.attr}"
-    return None
-
-
-class _NormalizeAnnotation(ast.NodeTransformer):
-    """Rewrite ``Optional[X]`` / ``Union[A, B]`` to PEP 604 form and drop ``typing.``."""
-
-    def visit_Subscript(self, node: ast.Subscript) -> ast.expr:
-        """Rewrite ``Optional[X]`` and ``Union[...]`` subscripts to PEP 604 unions."""
-        self.generic_visit(node)
-        name = _dotted(node.value) or ""
-        short = name.rsplit(".", 1)[-1]
-        if short == "Optional":
-            return ast.BinOp(left=node.slice, op=ast.BitOr(), right=ast.Constant(value=None))
-        if short == "Union" and isinstance(node.slice, ast.Tuple) and node.slice.elts:
-            result = node.slice.elts[0]
-            for member in node.slice.elts[1:]:
-                result = ast.BinOp(left=result, op=ast.BitOr(), right=member)
-            return result
-        return node
-
-
-def _annotation(node: ast.expr) -> str:
-    """Canonical text of an annotation expression."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return canonical.canonical_type_annotation(node.value)  # quoted forward reference
-    tree = _NormalizeAnnotation().visit(ast.fix_missing_locations(node))
-    text = ast.unparse(tree)
-    for prefix in _TYPING_MODULES:
-        text = text.replace(prefix, "")
-    return canonical.canonical_type_annotation(text)
 
 
 def _is_deprecation_warning(call: ast.Call) -> bool:
@@ -156,102 +118,12 @@ def _raised_exceptions(func: _FunctionNode) -> list[str]:
     return sorted(set(found))
 
 
-@dataclass(frozen=True, slots=True)
-class _Definition:
-    """One function, method, or class found in a module."""
-
-    qualname: str
-    node: _FunctionNode | ast.ClassDef
-    in_class: bool
-
-
-@dataclass(slots=True)
-class _Walker:
-    """Collects definitions, descending through ``if``/``try``/``with`` and class bodies."""
-
-    module: str
-    found: list[_Definition] = field(default_factory=list)
-
-    def walk(self, body: list[ast.stmt], prefix: str, in_class: bool) -> None:
-        """Collect definitions from ``body``, recursing into compound statements and classes."""
-        for stmt in body:
-            if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
-                if any((_dotted(d) or "").endswith("overload") for d in stmt.decorator_list):
-                    continue  # typing stubs, not definitions
-                self.found.append(_Definition(f"{prefix}{stmt.name}", stmt, in_class))
-            elif isinstance(stmt, ast.ClassDef):
-                self.found.append(_Definition(f"{prefix}{stmt.name}", stmt, in_class))
-                self.walk(stmt.body, f"{prefix}{stmt.name}.", in_class=True)
-            elif isinstance(stmt, ast.If | ast.With | ast.AsyncWith | ast.For | ast.While):
-                self.walk(stmt.body, prefix, in_class)
-                self.walk(stmt.orelse if hasattr(stmt, "orelse") else [], prefix, in_class)
-            elif isinstance(stmt, ast.Try):
-                for block in (stmt.body, stmt.orelse, stmt.finalbody):
-                    self.walk(block, prefix, in_class)
-                for handler in stmt.handlers:
-                    self.walk(handler.body, prefix, in_class)
-
-
 _ALLOWED_CLASS_DECORATORS = frozenset(
     {"final", "runtime_checkable", "deprecated", "type_check_only"}
 )
 _NAMESPACE_CALLS = frozenset({"globals", "vars", "locals", "exec", "eval"})
 _OPEN_CLASS_METHODS = frozenset({"__getattr__", "__getattribute__"})
 _RECEIVER_MUTATORS = frozenset({"setattr", "delattr", "vars"})
-
-
-def _scope_nodes(body: Iterable[ast.AST], *, into_classes: bool = False) -> Iterator[ast.AST]:
-    """Nodes that execute *in this namespace*.
-
-    Yields definitions themselves (and what runs at definition time: decorators,
-    defaults, bases) but never descends into function, lambda, or comprehension
-    bodies. A nested class body is entered only with ``into_classes`` -- it runs
-    at import time, but binds names in the *class*, not in this namespace.
-    """
-    stack = list(body)
-    while stack:
-        node = stack.pop()
-        yield node
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            stack.extend(node.decorator_list)
-            stack.extend(node.args.defaults)
-            stack.extend(d for d in node.args.kw_defaults if d is not None)
-        elif isinstance(node, ast.ClassDef):
-            stack.extend(node.decorator_list)
-            stack.extend(node.bases)
-            stack.extend(k.value for k in node.keywords)
-            if into_classes:
-                stack.extend(node.body)
-        elif not isinstance(
-            node, ast.Lambda | ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
-        ):
-            stack.extend(ast.iter_child_nodes(node))
-
-
-def _bound_names(body: Iterable[ast.AST]) -> dict[str, int]:
-    """Names bound in this namespace by something other than ``def``/``class``, with first line."""
-    found: dict[str, int] = {}
-
-    def bind(name: str, line: int) -> None:
-        found[name] = min(line, found.get(name, line))
-
-    for node in _scope_nodes(body):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            bind(node.id, node.lineno)
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                bind(alias.asname or alias.name.split(".")[0], node.lineno)
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name != "*":
-                    bind(alias.asname or alias.name, node.lineno)
-        elif (isinstance(node, ast.ExceptHandler) and node.name) or (
-            isinstance(node, ast.MatchAs | ast.MatchStar) and node.name
-        ):
-            bind(node.name, node.lineno)
-        elif isinstance(node, ast.MatchMapping) and node.rest:
-            bind(node.rest, node.lineno)
-    return found
 
 
 def _is_namespace_call(node: ast.AST) -> bool:

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from ontolith.core.ids import SequentialIdProvider
 
+from plumbline.adapters.docstring_claim_importer import DocstringClaimImporter
 from plumbline.adapters.ontolith_kb import OntolithKnowledgeBase
 from plumbline.adapters.python_code_importer import PythonCodeImporter
 from plumbline.application.symbol_facts import KeyConflict
@@ -47,7 +48,7 @@ def replayed(tmp_path_factory: pytest.TempPathFactory) -> Replayed:
     use_case = IngestOneCommit(
         repo=HISTORY,
         code_importer=PythonCodeImporter("zoo", "zoo"),
-        doc_importers=(),
+        doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
         kb=kb,
         repo_slug="zoo/zoo",
     )

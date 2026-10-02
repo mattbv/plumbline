@@ -13,15 +13,18 @@ case leaves the KB as it was: that can delay a true drift report, never invent o
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 
 from plumbline.application.ports import (
+    ActiveClaim,
     CodeImporter,
     CommitRef,
     DocImporter,
     KnowledgeBase,
     RawClaim,
     RepoReader,
+    RetractOutcome,
 )
 from plumbline.application.symbol_facts import (
     KeyConflict,
@@ -36,6 +39,20 @@ from plumbline.domain.anchors import Anchor
 
 
 @dataclass(frozen=True, slots=True)
+class DeferredClaim:
+    """A doc change that was not applied because the old claim is under dispute (ADR-0006 §3).
+
+    The importer may not withdraw its own claim once it is a member of an open
+    contradiction, and asserting a replacement would only grow the dispute. So the
+    change waits for a human resolution, and this record says so.
+    """
+
+    author: str
+    path: str
+    fact_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class IngestReport:
     """What one commit did, including the cases that were deliberately left alone.
 
@@ -46,12 +63,29 @@ class IngestReport:
             module symbol (e.g. a file that no longer parses). Their symbols were
             left untouched.
         conflicts: Symbol keys claimed by more than one path, and who lost.
+        claims_asserted: Doc claims newly stated and written.
+        claims_retracted: Doc claims no longer stated and withdrawn.
+        deferred: Doc changes held back because the old claim is disputed.
     """
 
     written: int = 0
     removed: tuple[str, ...] = ()
     unanalyzed: tuple[str, ...] = ()
     conflicts: tuple[KeyConflict, ...] = ()
+    claims_asserted: int = 0
+    claims_retracted: int = 0
+    deferred: tuple[DeferredClaim, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _DocPlan:
+    """One doc importer's wanted claims versus the KB's present ones, per analyzed path."""
+
+    importer: DocImporter
+    paths: list[str]
+    wanted: dict[str, dict[tuple[str, str], RawClaim]]
+    present: dict[str, set[tuple[str, str]]]
+    existing: dict[str, list[ActiveClaim]]
 
 
 @dataclass(slots=True)
@@ -78,17 +112,83 @@ class IngestOneCommit:
         claims = self.code_importer.extract(files, commit)
         report = self._apply_code_facts(commit, files, deleted, claims)
 
-        # 2-5. Projection/claim retract+assert is the drift projector's job
-        # (a Reasoner, PRD §7.8) -- not this use case's. IngestOneCommit's
-        # own responsibility ends at getting L1 and raw doc claims into the
-        # KB; ReconcileDrift (M1) runs the projector and claim bookkeeping
-        # this docstring's steps 2-5 describe.
-        for importer in self.doc_importers:
-            for claim in importer.extract(files, commit):
-                self.kb.record_claim(
-                    claim, author_principal="plumb-doc-importer", as_of=commit.committed_at
-                )
-        return report
+        # 2-5. The projection's retract+assert is the drift projector's job (a
+        # Reasoner, PRD §7.8). This use case owns the doc side: claims no longer
+        # stated are retracted before new ones are asserted (§7.7 steps 3 and 5).
+        asserted, retracted, deferred = self._apply_doc_claims(commit, files, deleted)
+        return IngestReport(
+            written=report.written,
+            removed=report.removed,
+            unanalyzed=report.unanalyzed,
+            conflicts=report.conflicts,
+            claims_asserted=asserted,
+            claims_retracted=retracted,
+            deferred=tuple(deferred),
+        )
+
+    def _apply_doc_claims(
+        self, commit: CommitRef, files: dict[str, bytes], deleted: frozenset[str]
+    ) -> tuple[int, int, list[DeferredClaim]]:
+        """The set-difference protocol per ``(fact, author, path)`` (ADR-0006 §2-3)."""
+        plans = [
+            plan
+            for importer in self.doc_importers
+            if (plan := self._plan(importer, files, deleted, commit))
+        ]
+
+        # Pass 1: retract everything no longer stated, before anything is asserted.
+        retracted = 0
+        held: set[tuple[str, str, str]] = set()
+        for plan in plans:
+            for path in plan.paths:
+                for existing in sorted(
+                    plan.existing.get(path, []), key=lambda c: (c.fact_key, c.value)
+                ):
+                    if (existing.fact_key, existing.value) in plan.wanted.get(path, {}):
+                        continue
+                    outcome = self.kb.retract_claim(
+                        existing.claim_id,
+                        author_principal=plan.importer.principal,
+                        as_of=commit.committed_at,
+                    )
+                    if outcome is RetractOutcome.RETRACTED:
+                        retracted += 1
+                    else:
+                        held.add((plan.importer.principal, path, existing.fact_key))
+
+        # Pass 2: assert what is newly stated -- but never a replacement for a
+        # claim that is stuck in a dispute.
+        asserted = 0
+        for plan in plans:
+            author = plan.importer.principal
+            for path in plan.paths:
+                for (fact_key, value), claim in sorted(plan.wanted.get(path, {}).items()):
+                    if (fact_key, value) in plan.present[path] or (author, path, fact_key) in held:
+                        continue
+                    self.kb.record_claim(claim, author_principal=author, as_of=commit.committed_at)
+                    asserted += 1
+
+        return asserted, retracted, [DeferredClaim(a, p, f) for a, p, f in sorted(held)]
+
+    def _plan(
+        self,
+        importer: DocImporter,
+        files: dict[str, bytes],
+        deleted: frozenset[str],
+        commit: CommitRef,
+    ) -> _DocPlan | None:
+        """What one importer now states versus what the KB holds, per analyzed path."""
+        extraction = importer.extract(files, commit)
+        paths = sorted(extraction.analyzed_paths | {p for p in deleted if importer.handles(p)})
+        if not paths:
+            return None
+        wanted: dict[str, dict[tuple[str, str], RawClaim]] = defaultdict(dict)
+        for claim in extraction.claims:
+            path = anchors.parse(claim.anchor_uri).path
+            wanted[path].setdefault((claim.fact_key, claim.raw_value), claim)
+        existing = self.kb.active_claims(importer.principal, paths)
+        present = {path: {(c.fact_key, c.value) for c in existing.get(path, [])} for path in paths}
+        return _DocPlan(importer, paths, dict(wanted), present, existing)
 
     def _apply_code_facts(
         self,
@@ -97,6 +197,7 @@ class IngestOneCommit:
         deleted: frozenset[str],
         claims: list[RawClaim],
     ) -> IngestReport:
+        """Write changed L1 fields, infer removals, and report what was left alone."""
         snapshot = assemble(claims)
         emitters = emitting_paths(claims)
         analyzed = frozenset(
