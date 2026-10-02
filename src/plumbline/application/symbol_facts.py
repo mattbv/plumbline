@@ -35,11 +35,14 @@ class SymbolFields:
     """The L1 ``Symbol`` assertions for one symbol after one commit.
 
     ``None`` means "write nothing for this field" (the importer made no claim).
+    ``anchor`` is the SHA-pinned anchor of the definition; it is not a field but
+    the ``source`` (provenance) of every assertion written for this symbol.
     """
 
     kind: str
     present: str
     defined_at: str
+    anchor: str
     is_deprecated: str | None = None
     namespace_closed: str | None = None
     signature_json: str | None = None
@@ -103,6 +106,7 @@ def _assemble_one(symbol_key: str, claims: list[RawClaim]) -> SymbolFields:
         kind=kind.raw_value,
         present="true",
         defined_at=anchors.parse(exists.anchor_uri).path,
+        anchor=exists.anchor_uri,
         is_deprecated=None if deprecated is None else deprecated.raw_value,
         namespace_closed=None if closed is None else closed.raw_value,
         signature_json=blob,

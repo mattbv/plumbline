@@ -79,6 +79,15 @@ def _git(root: Path, extra_env: dict[str, str], *args: str) -> str:
     return result.stdout
 
 
+def timeline(scenarios: Sequence[Scenario]) -> dict[tuple[str, str], datetime]:
+    """Commit time of every ``(scenario id, commit label)``: one hour apart, in id order."""
+    times: dict[tuple[str, str], datetime] = {}
+    for scenario in sorted(scenarios, key=lambda s: s.id):
+        for commit in scenario.commits:
+            times[(scenario.id, commit.label)] = EPOCH + len(times) * COMMIT_SPACING
+    return times
+
+
 def tag_name(scenario_id: str, version: str) -> str:
     """Return the release tag created for `version` in scenario `scenario_id`."""
     return f"{scenario_id}/v{version}"
@@ -109,8 +118,7 @@ def build(scenarios: Sequence[Scenario], dest: Path) -> BuiltZoo:
     _git(dest, {}, "init", "-q", "-b", "main")
 
     shas: dict[tuple[str, str], str] = {}
-    times: dict[tuple[str, str], datetime] = {}
-    sequence = 0
+    times = timeline(ordered)
     for scenario in ordered:
         for commit in scenario.commits:
             base = dest / "scenarios" / scenario.id
@@ -121,7 +129,7 @@ def build(scenarios: Sequence[Scenario], dest: Path) -> BuiltZoo:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(commit.write[rel].encode("utf-8"))
 
-            when = EPOCH + sequence * COMMIT_SPACING
+            when = times[(scenario.id, commit.label)]
             stamp = when.strftime("%Y-%m-%dT%H:%M:%S+0000")
             env = {
                 "GIT_AUTHOR_NAME": _IDENTITY[0],
@@ -137,6 +145,4 @@ def build(scenarios: Sequence[Scenario], dest: Path) -> BuiltZoo:
             if commit.tag is not None:
                 _git(dest, env, "tag", tag_name(scenario.id, commit.tag))
             shas[(scenario.id, commit.label)] = sha
-            times[(scenario.id, commit.label)] = when
-            sequence += 1
     return BuiltZoo(root=dest, shas=shas, committed_at=times)

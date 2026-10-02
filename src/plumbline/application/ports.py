@@ -49,7 +49,12 @@ class RepoReader(Protocol):
         ...
 
     def read_file_at(self, path: str, commit_sha: str) -> bytes:
-        """Return one file's raw bytes as of `commit_sha`."""
+        """Return one file's raw bytes as of `commit_sha`.
+
+        Raises:
+            FileNotFoundError: The path does not exist at that commit, e.g. it
+                was deleted by the commit being ingested.
+        """
         ...
 
 
@@ -80,8 +85,24 @@ class KnowledgeBase(Protocol):
     exposing the full `Ontology` surface here.
     """
 
-    def record_code_fact(self, symbol_key: str, field: str, value: str, *, as_of: datetime) -> None:
-        """Write an L1 `Symbol.*` fact -- always supersedes, never contradicts."""
+    def symbol_fields(self, symbol_key: str) -> dict[str, str] | None:
+        """Return a symbol's *active* L1 values keyed by `Symbol` field name.
+
+        Returns:
+            ``None`` if the KB has no such symbol yet, else ``{field: value}``
+            for every field with a currently open (not superseded) assertion.
+        """
+        ...
+
+    def record_code_fact(
+        self, symbol_key: str, field: str, value: str, *, as_of: datetime, source: str
+    ) -> None:
+        """Write one L1 `Symbol.<field>` fact -- always supersedes, never contradicts.
+
+        Creates the symbol if it does not exist yet. ``as_of`` is when the fact
+        became true (the commit's time); ``source`` is the anchor URI of the
+        definition, recorded as the assertion's provenance.
+        """
         ...
 
     def record_claim(self, claim: RawClaim, *, author_principal: str, as_of: datetime) -> None:

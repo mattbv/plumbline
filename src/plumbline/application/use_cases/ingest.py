@@ -22,6 +22,7 @@ from plumbline.application.ports import (
     KnowledgeBase,
     RepoReader,
 )
+from plumbline.application.symbol_facts import assemble
 
 
 @dataclass(slots=True)
@@ -35,13 +36,25 @@ class IngestOneCommit:
 
     def run(self, commit: CommitRef) -> None:
         """Apply `commit` to the KB (PRD §7.7, steps 1-5; step 6 is `ReconcileDrift`)."""
-        files = {path: self.repo.read_file_at(path, commit.sha) for path in commit.changed_paths}
+        files = self._read_changed_files(commit)
 
-        # 1. L1: code facts (supersession).
-        for claim in self.code_importer.extract(files, commit):
-            self.kb.record_code_fact(
-                claim.symbol_key, claim.aspect, claim.raw_value, as_of=commit.committed_at
-            )
+        # 1. L1: code facts (supersession). The importer's atomic claims are
+        # assembled into the coarse `Symbol` fields (ADR-0004), then diffed
+        # against the KB's active values so an unchanged field writes nothing
+        # (PRD §7.7): KB growth tracks churn, and re-ingesting a commit is a no-op.
+        # Symbols that *disappeared* from a changed file are not handled yet --
+        # deriving `present = false` is the snapshot-vs-KB diff, a later step.
+        for symbol_key, fields in assemble(self.code_importer.extract(files, commit)).items():
+            current = self.kb.symbol_fields(symbol_key) or {}
+            for field, value in fields.as_mapping().items():
+                if current.get(field) != value:
+                    self.kb.record_code_fact(
+                        symbol_key,
+                        field,
+                        value,
+                        as_of=commit.committed_at,
+                        source=fields.anchor,
+                    )
 
         # 2-5. Projection/claim retract+assert is the drift projector's job
         # (a Reasoner, PRD §7.8) -- not this use case's. IngestOneCommit's
@@ -53,3 +66,13 @@ class IngestOneCommit:
                 self.kb.record_claim(
                     claim, author_principal="plumb-doc-importer", as_of=commit.committed_at
                 )
+
+    def _read_changed_files(self, commit: CommitRef) -> dict[str, bytes]:
+        """Contents of every changed path that still exists (deleted paths are skipped)."""
+        files: dict[str, bytes] = {}
+        for path in commit.changed_paths:
+            try:
+                files[path] = self.repo.read_file_at(path, commit.sha)
+            except FileNotFoundError:
+                continue  # deleted by this commit: nothing to extract from it
+        return files
