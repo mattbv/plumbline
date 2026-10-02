@@ -34,6 +34,9 @@ class CommitRef:
     sha: str
     committed_at: datetime
     changed_paths: tuple[str, ...]
+    """Every added, modified, or deleted path. A rename lists **both** the old and the
+    new path (the reader runs Git with rename detection off), so a moved file's old
+    symbols are seen to leave (ADR-0005)."""
 
 
 class RepoReader(Protocol):
@@ -91,6 +94,14 @@ class KnowledgeBase(Protocol):
         Returns:
             ``None`` if the KB has no such symbol yet, else ``{field: value}``
             for every field with a currently open (not superseded) assertion.
+        """
+        ...
+
+    def symbols_defined_in(self, path: str) -> list[str]:
+        """Keys of the symbols whose active ``defined_at`` is ``path`` and that are present.
+
+        Used to infer removals: the symbols a file used to define are compared with
+        what it defines now (ADR-0005). Sorted, so callers are deterministic.
         """
         ...
 

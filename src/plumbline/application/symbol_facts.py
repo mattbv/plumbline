@@ -25,9 +25,25 @@ from dataclasses import dataclass
 from plumbline.application.ports import RawClaim
 from plumbline.domain import anchors, signature
 
-KINDS = frozenset({"module", "class", "function", "method", "attribute"})
+KINDS = frozenset({"module", "class", "function", "method", "attribute", "ambiguous"})
+
+_RANK = {"module": 3, "class": 2, "function": 2, "method": 2, "ambiguous": 2, "attribute": 1}
 _SIGNATURE_KINDS = frozenset({"function", "method"})
 _DIRECT = {"exists", "deprecated", "namespace_closed", "kind"}
+
+
+def kind_rank(kind: str) -> int:
+    """Precedence when two paths claim one key: module > definition > attribute (ADR-0005)."""
+    return _RANK[kind]
+
+
+@dataclass(frozen=True, slots=True)
+class KeyConflict:
+    """Two paths claimed one symbol key; ``dropped_path`` lost to ``kept_path``."""
+
+    symbol_key: str
+    kept_path: str
+    dropped_path: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +76,29 @@ class SymbolFields:
         return {name: value for name, value in pairs.items() if value is not None}
 
 
+def _path(claim: RawClaim) -> str:
+    return anchors.parse(claim.anchor_uri).path
+
+
+def _by_key_and_path(claims: Iterable[RawClaim]) -> dict[str, dict[str, list[RawClaim]]]:
+    grouped: dict[str, dict[str, list[RawClaim]]] = defaultdict(lambda: defaultdict(list))
+    for claim in claims:
+        grouped[claim.symbol_key][_path(claim)].append(claim)
+    return grouped
+
+
+def emitting_paths(claims: Iterable[RawClaim]) -> dict[str, frozenset[str]]:
+    """Which paths emitted claims for each symbol key (usually one; two means a collision)."""
+    return {key: frozenset(paths) for key, paths in _by_key_and_path(claims).items()}
+
+
 def assemble(claims: Iterable[RawClaim]) -> dict[str, SymbolFields]:
     """Group claims by symbol and assemble each symbol's L1 fields.
+
+    If two paths claim the same key (a package's ``from . import sub`` binds an
+    attribute with the key of the ``sub`` module), the higher-ranked kind wins and
+    a tie goes to the lexicographically first path, so the result is deterministic
+    (ADR-0005). `find_conflicts` reports what lost.
 
     Args:
         claims: Everything the code importer emitted for a commit.
@@ -70,15 +107,31 @@ def assemble(claims: Iterable[RawClaim]) -> dict[str, SymbolFields]:
         ``{symbol_key: SymbolFields}``, ordered by symbol key.
 
     Raises:
-        ValueError: A symbol lacks ``exists`` or ``kind``, repeats an aspect,
-            has an unknown ``kind``, or carries signature facts but is not a
-            function or method. The importer never produces these, so they
+        ValueError: A symbol lacks ``exists`` or ``kind``, repeats an aspect within
+            one path, has an unknown ``kind``, or carries signature facts but is
+            not a function or method. The importer never produces these, so they
             signal a bug rather than hostile input.
     """
-    grouped: dict[str, list[RawClaim]] = defaultdict(list)
-    for claim in claims:
-        grouped[claim.symbol_key].append(claim)
-    return {key: _assemble_one(key, grouped[key]) for key in sorted(grouped)}
+    grouped = _by_key_and_path(claims)
+    return {key: _winner(key, grouped[key])[0] for key in sorted(grouped)}
+
+
+def find_conflicts(claims: Iterable[RawClaim]) -> list[KeyConflict]:
+    """Every key claimed from more than one path, with who kept it and who lost."""
+    conflicts: list[KeyConflict] = []
+    for key, by_path in sorted(_by_key_and_path(claims).items()):
+        if len(by_path) > 1:
+            kept = _winner(key, by_path)[1]
+            conflicts.extend(
+                KeyConflict(key, kept, path) for path in sorted(by_path) if path != kept
+            )
+    return conflicts
+
+
+def _winner(key: str, by_path: dict[str, list[RawClaim]]) -> tuple[SymbolFields, str]:
+    candidates = {path: _assemble_one(key, claims) for path, claims in by_path.items()}
+    path = min(candidates, key=lambda p: (-kind_rank(candidates[p].kind), p))
+    return candidates[path], path
 
 
 def _assemble_one(symbol_key: str, claims: list[RawClaim]) -> SymbolFields:

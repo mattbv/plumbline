@@ -116,6 +116,24 @@ class OntolithKnowledgeBase:
             if a.predicate.startswith("Symbol.") and a.valid_to is None
         }
 
+    def symbols_defined_in(self, path: str) -> list[str]:
+        """Keys of present symbols whose active `defined_at` is `path`, sorted.
+
+        Uses Ontolith's query on a literal property. That is not indexed, so it
+        scans: measured ~3 ms per path at 6k symbols and ~30 ms at 30k (ADR-0005
+        keeps a per-file manifest as the fallback if this ever dominates).
+        """
+        keys = []
+        for entity in self._kb.query("Symbol").where(defined_at=path).all():
+            present = [
+                a
+                for a in self._kb.assertions(subject=entity.id, predicate="Symbol.present")
+                if a.valid_to is None
+            ]
+            if present and str(present[0].value) == "true" and entity.natural_key is not None:
+                keys.append(entity.natural_key)
+        return sorted(keys)
+
     def record_code_fact(
         self, symbol_key: str, field: str, value: str, *, as_of: datetime, source: str
     ) -> None:

@@ -53,6 +53,15 @@ that is missing is *drift*; `closed=False` means something could still supply
 it, so the claim stays *unverified* (an `abstain`). Pair each closure label with
 the L2 expectation it explains.
 
+## State expectations
+
+A `StateExpectation` labels what the **stored** L1 state of a symbol must be after a
+commit is ingested: `present`, and optionally `kind` and `defined_at`. It is the only
+way to express removal and, just as importantly, "left alone" (a file that stopped
+parsing must not look like a deleted file). A `Commit` can mark a Python file as
+`broken=` when it is intentionally not valid syntax; the linter then checks that it
+really fails to parse, and that every other Python file does.
+
 ## Adding a scenario
 
 1. Pick the PRD section or requirement it exercises and put it in `prd_refs`.

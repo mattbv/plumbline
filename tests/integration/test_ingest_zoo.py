@@ -45,6 +45,7 @@ def _ingest(kb: OntolithKnowledgeBase, steps: int | None = None) -> None:
         code_importer=PythonCodeImporter("zoo", "zoo"),
         doc_importers=(),
         kb=kb,
+        repo_slug="o/r",
     )
     for step in HISTORY.steps[:steps]:
         use_case.run(step.ref)
@@ -174,6 +175,7 @@ class TestIdempotenceAndDeterminism:
             code_importer=PythonCodeImporter("zoo", "zoo"),
             doc_importers=(),
             kb=kb,
+            repo_slug="o/r",
         )
         latest = {step.scenario.id: step for step in HISTORY.steps}
         for step in latest.values():
@@ -191,6 +193,7 @@ class TestIdempotenceAndDeterminism:
             code_importer=PythonCodeImporter("zoo", "zoo"),
             doc_importers=(),
             kb=kb,
+            repo_slug="o/r",
         )
         with pytest.raises(OutOfOrderIngest, match="before the current value"):
             use_case.run(first.ref)
@@ -221,6 +224,7 @@ class TestLiveMode:
             code_importer=PythonCodeImporter("zoo", "zoo"),
             doc_importers=(),
             kb=kb,
+            repo_slug="o/r",
         )
         for step in history.steps:
             use_case.run(step.ref)

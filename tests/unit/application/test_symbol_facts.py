@@ -130,3 +130,75 @@ class TestAspectsOf:
         assert aspects_of(
             SymbolFields(kind="attribute", present="true", defined_at="x.py", anchor="a")
         ) == [("exists", "true")]
+
+
+from plumbline.application.symbol_facts import (  # noqa: E402
+    KeyConflict,
+    emitting_paths,
+    find_conflicts,
+    kind_rank,
+)
+
+
+def at(path: str, symbol: str, kind: str) -> list[RawClaim]:
+    anchor = f"repo://o/r@{SHA}/{path}#L1-L2"
+    return [
+        RawClaim(symbol, "exists", "true", anchor, 1.0, "t"),
+        RawClaim(symbol, "kind", kind, anchor, 1.0, "t"),
+    ]
+
+
+class TestAmbiguous:
+    def test_an_ambiguous_symbol_is_present_but_has_no_details(self) -> None:
+        fields = assemble(at("src/m.py", "py:m.f", "ambiguous"))["py:m.f"]
+        assert fields.kind == "ambiguous" and fields.present == "true"
+        assert fields.signature_json is None and fields.is_deprecated is None
+
+    def test_ambiguity_with_signature_facts_is_a_bug(self) -> None:
+        claims = [
+            *at("src/pkg/mod.py", "py:m.f", "ambiguous"),
+            claim("py:m.f", "returns.type", "int"),
+        ]
+        with pytest.raises(ValueError, match="cannot have signature facts"):
+            assemble(claims)
+
+    def test_projection_of_an_ambiguous_symbol_is_just_existence(self) -> None:
+        assert aspects_of(assemble(at("src/m.py", "py:m.f", "ambiguous"))["py:m.f"]) == [
+            ("exists", "true")
+        ]
+
+
+class TestKeyOwnership:
+    MODULE = at("pkg/sub.py", "py:pkg.sub", "module")
+    ALIAS = at("pkg/__init__.py", "py:pkg.sub", "attribute")
+
+    def test_ranks_order_module_over_definition_over_attribute(self) -> None:
+        assert kind_rank("module") > kind_rank("function") > kind_rank("attribute")
+        assert kind_rank("class") == kind_rank("method") == kind_rank("ambiguous")
+
+    @pytest.mark.parametrize("order", ["module-first", "alias-first"])
+    def test_a_module_beats_the_import_that_shares_its_key_in_either_order(
+        self, order: str
+    ) -> None:
+        claims = (
+            [*self.MODULE, *self.ALIAS] if order == "module-first" else [*self.ALIAS, *self.MODULE]
+        )
+        fields = assemble(claims)["py:pkg.sub"]
+        assert (fields.kind, fields.defined_at) == ("module", "pkg/sub.py")
+
+    def test_a_tie_goes_to_the_lexicographically_first_path(self) -> None:
+        claims = [*at("b/x.py", "py:m.f", "function"), *at("a/x.py", "py:m.f", "function")]
+        assert assemble(claims)["py:m.f"].defined_at == "a/x.py"
+
+    def test_conflicts_name_the_winner_and_the_loser(self) -> None:
+        assert find_conflicts([*self.ALIAS, *self.MODULE]) == [
+            KeyConflict("py:pkg.sub", "pkg/sub.py", "pkg/__init__.py")
+        ]
+
+    def test_no_conflict_when_a_key_has_one_path(self) -> None:
+        assert find_conflicts(METHOD) == []
+
+    def test_emitting_paths_lists_every_path_per_key(self) -> None:
+        assert emitting_paths([*self.ALIAS, *self.MODULE]) == {
+            "py:pkg.sub": frozenset({"pkg/sub.py", "pkg/__init__.py"})
+        }

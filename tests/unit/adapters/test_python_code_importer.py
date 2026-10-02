@@ -207,7 +207,8 @@ class TestDeprecation:
 
 
 class TestAbstention:
-    def test_duplicate_definitions_abstain_entirely(self) -> None:
+    def test_duplicate_definitions_say_only_that_the_name_exists(self) -> None:
+        """Existence is certain, everything else is not -- and absence must not be inferred."""
         facts = extract("""
             try:
                 def f(a=1): ...
@@ -215,8 +216,23 @@ class TestAbstention:
                 def f(a=2): ...
             def g(): ...
         """)
-        assert not [k for k in facts if k[0] == "py:pkg.mod.f"]
+        assert {k: v for k, v in facts.items() if k[0] == "py:pkg.mod.f"} == {
+            ("py:pkg.mod.f", "exists"): "true",
+            ("py:pkg.mod.f", "kind"): "ambiguous",
+        }
         assert ("py:pkg.mod.g", "exists") in facts
+
+    def test_an_ambiguous_symbol_is_anchored_at_its_first_definition(self) -> None:
+        claims = PythonCodeImporter("o", "r").extract(
+            {"src/pkg/mod.py": b"def f(): ...\n\n\ndef f(): ...\n"}, COMMIT
+        )
+        exists = next(c for c in claims if c.symbol_key == "py:pkg.mod.f" and c.aspect == "exists")
+        anchor = anchors.parse(exists.anchor_uri)
+        assert (anchor.line_start, anchor.line_end) == (1, 1)
+
+    def test_private_duplicates_stay_hidden(self) -> None:
+        facts = extract("def _f(): ...\ndef _f(): ...\n")
+        assert not [k for k in facts if k[0] == "py:pkg.mod._f"]
 
     def test_overload_stubs_are_not_definitions(self) -> None:
         facts = extract("""
@@ -384,9 +400,10 @@ class TestClassClosure:
         assert closed(source) == "true"
         assert closed(source, "py:pkg.mod.C") == "false"
 
-    def test_duplicate_class_definitions_abstain(self) -> None:
+    def test_duplicate_class_definitions_have_no_closure_verdict(self) -> None:
         source = "class C: ...\nclass C: ..."
         assert closed(source, "py:pkg.mod.C") is None
+        assert kinds(source)["py:pkg.mod.C"] == "ambiguous"
 
     def test_functions_have_no_namespace_fact(self) -> None:
         assert closed("def f(): ...", "py:pkg.mod.f") is None
@@ -481,7 +498,7 @@ class TestBoundNames:
 
     def test_members_of_a_duplicated_class_abstain(self) -> None:
         facts = extract("class C:\n    def m(self): ...\nclass C:\n    x = 1\n")
-        assert not [k for k in facts if k[0].startswith("py:pkg.mod.C")]
+        assert {k[0] for k in facts if k[0].startswith("py:pkg.mod.C")} == {"py:pkg.mod.C"}
 
 
 def kinds(source: str, **kwargs: bool) -> dict[str, str]:

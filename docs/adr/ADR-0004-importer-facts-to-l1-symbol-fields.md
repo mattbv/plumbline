@@ -53,7 +53,7 @@ schema except what is called out under *Open questions*.
 | `deprecated` | `is_deprecated` | `true`/`false` |
 | `namespace_closed` | `namespace_closed` | `true`/`false` (modules, classes) |
 | anchor of the `exists` claim | `defined_at` | the definition's **path** |
-| `kind` (new importer fact, see below) | `kind` | `function`, `method`, `class`, `module`, … |
+| `kind` (new importer fact, see below) | `kind` | `function`, `method`, `class`, `module`, `attribute`, and `ambiguous` for a name defined more than once (ADR-0005) |
 | `param_names`, `param.<p>.exists/default/type`, `returns.type`, `raises.<Exc>` | `signature_json` | canonical JSON object (below) |
 
 **`signature_json` v1** is one canonical JSON object: keys sorted, compact
