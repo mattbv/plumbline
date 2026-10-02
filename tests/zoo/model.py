@@ -121,6 +121,22 @@ class Expectation:
 
 
 @dataclass(frozen=True, slots=True)
+class ClosureExpectation:
+    """The expected ``namespace_closed`` value of a module or class after a commit (ADR-0003).
+
+    ``closed=True`` means the importer must emit ``true``: every name in the
+    namespace is determined by the source, so the projector may treat a missing
+    name as absent. ``closed=False`` means it must emit ``false``: the projector
+    abstains about missing names.
+    """
+
+    commit: str
+    symbol: str
+    closed: bool
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Scenario:
     """A seeded, labeled drift scenario.
 
@@ -131,6 +147,7 @@ class Scenario:
         prd_refs: PRD sections this scenario exercises, e.g. ``("§14#2",)``.
         commits: The history, oldest first.
         expectations: The labeled outcomes.
+        closures: Expected ``namespace_closed`` values (ADR-0003).
     """
 
     id: str
@@ -138,6 +155,7 @@ class Scenario:
     prd_refs: tuple[str, ...]
     commits: tuple[Commit, ...]
     expectations: tuple[Expectation, ...]
+    closures: tuple[ClosureExpectation, ...] = ()
 
     def commit_index(self, label: str) -> int:
         """Return the position of the commit named `label`.

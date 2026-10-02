@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..model import Commit, Expectation, Layer, Outcome, Scenario
+from ..model import ClosureExpectation, Commit, Expectation, Layer, Outcome, Scenario
 from ._util import package, sym, text
 
 _ID1 = "dynamic_module_getattr"
@@ -36,6 +36,7 @@ DYNAMIC_MODULE_GETATTR = Scenario(
             note="Never project 'false' for exists in a dynamic module; stays unverified.",
         ),
     ),
+    closures=(ClosureExpectation("c1", sym(_ID1, "plugins"), closed=False),),
 )
 
 _ID2 = "kwargs_abstention"

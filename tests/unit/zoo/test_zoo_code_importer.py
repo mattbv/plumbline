@@ -14,7 +14,7 @@ import pytest
 
 from plumbline.adapters.python_code_importer import PythonCodeImporter
 from plumbline.application.ports import CommitRef
-from tests.zoo.model import Expectation, Outcome, Scenario
+from tests.zoo.model import ClosureExpectation, Expectation, Outcome, Scenario
 from tests.zoo.scenarios import ALL
 
 _HANDLED_PREFIXES = ("param.", "raises.")
@@ -63,6 +63,9 @@ def test_importer_matches_the_zoo_labels(scenario: Scenario, exp: Expectation) -
     slot = (exp.symbol, exp.aspect)
     projected = _project(scenario, exp.commit)
 
+    if _derived_absence(exp, exp.code_value):
+        # A labeled 'false' is only sound if the importer really never bound the name.
+        assert slot not in projected, "the zoo says absent, but the importer found the name"
     if exp.outcome is Outcome.ABSTAIN:
         assert slot not in projected, "the zoo says the projector must abstain here"
         return
@@ -79,3 +82,27 @@ def test_importer_matches_the_zoo_labels(scenario: Scenario, exp: Expectation) -
 def test_the_zoo_actually_exercises_the_importer() -> None:
     """Guard against the parametrization silently collapsing to nothing."""
     assert len(_cases()) >= 25
+
+
+def _closure_cases() -> list[tuple[Scenario, ClosureExpectation]]:
+    return [(s, c) for s in ALL for c in s.closures]
+
+
+@pytest.mark.parametrize(
+    ("scenario", "closure"),
+    _closure_cases(),
+    ids=[f"{s.id}-{c.symbol.rsplit('.', 1)[-1]}" for s, c in _closure_cases()],
+)
+def test_importer_matches_the_zoo_closure_labels(
+    scenario: Scenario, closure: ClosureExpectation
+) -> None:
+    projected = _project(scenario, closure.commit)
+    expected = "true" if closure.closed else "false"
+    assert projected.get((closure.symbol, "namespace_closed")) == expected
+
+
+def test_closure_labels_cover_both_verdicts_and_both_kinds() -> None:
+    labels = _closure_cases()
+    assert {c.closed for _, c in labels} == {True, False}
+    kinds = {"class" if c.symbol.split(".")[-1][:1].isupper() else "module" for _, c in labels}
+    assert kinds == {"class", "module"}
