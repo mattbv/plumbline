@@ -121,9 +121,9 @@ symbols), which ADR-0003 Amendment 1 deliberately did not record.
 ### 7. Port changes
 
 `KnowledgeBase` gains `active_claims(author, path)` (the present claims, each with
-its assertion id) and `retract_claim(id)`; `record_claim` keeps its shape and now
-returns nothing it can fail silently on. A refused retraction surfaces as a typed
-`ClaimDisputed` result, not an exception the use case must string-match.
+its assertion id) and `retract_claim(id)`. `record_claim` keeps its shape. A
+refused retraction comes back as a typed `ClaimDisputed` result rather than an
+exception the use case would have to string-match.
 
 ## Alternatives Considered
 
