@@ -24,7 +24,9 @@ project actually is against that plan, updated as milestones close.
 2. A real `CodeImporter` (static AST analysis, PRD ING-1). *Part 1 landed
    (`plumbline.adapters.python_code_importer`): symbols, signatures,
    `raises`, and deprecation, checked against the drift zoo's labels. Part 2
-   added the namespace-closure analysis (ADR-0003). Still to do: `cli.*` (argparse/click/typer), `env.*`, and `project.*` facts, and
+   added the namespace-closure analysis (ADR-0003). The importer's output now
+   assembles into L1 `Symbol` fields (ADR-0004, `plumbline.application.symbol_facts`).
+   Still to do: `cli.*` (argparse/click/typer), `env.*`, and `project.*` facts, and
    the snapshot-vs-KB diff that derives "no longer exists".*
 3. Widen `KnowledgeBase` (`plumbline.application.ports`) to expose what
    `record_code_fact`/`record_claim` need from a real `Ontology` connection

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -128,7 +128,12 @@ assembler, and the two are property-tested against each other.
 - Names bound by assignment or import (ADR-0003 Amendment 1) become `Symbol`s
   with `present = true` and no blob, so they need a `kind`.
 
-## Open questions for you
+## Open questions (resolved)
+
+All three recommendations were accepted as written: `kind` is `time_varying`
+(schema edited in place, which is still possible before the first release);
+assigned and imported names get `kind = attribute`; and `raises` lives inside
+`signature_json`.
 
 1. **`kind` is `static` in the schema.** A name that changes from a function to
    a class would then open a *contradiction* on L1, which the model says must
