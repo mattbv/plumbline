@@ -8,12 +8,9 @@ projector must *abstain*, the importer must emit nothing for the slot.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
 
-from plumbline.adapters.python_code_importer import PythonCodeImporter
-from plumbline.application.ports import CommitRef
+from tests.zoo.importing import claims_at
 from tests.zoo.model import ClosureExpectation, Expectation, Outcome, Scenario
 from tests.zoo.scenarios import ALL
 
@@ -36,13 +33,7 @@ def _derived_absence(exp: Expectation, value: str | None) -> bool:
 
 
 def _project(scenario: Scenario, label: str) -> dict[tuple[str, str], str]:
-    files = {
-        f"scenarios/{scenario.id}/{path}": text.encode()
-        for path, text in scenario.files_at(label).items()
-    }
-    commit = CommitRef("abcdef0" * 5 + "abcde", datetime(2024, 1, 1, tzinfo=UTC), ())
-    claims = PythonCodeImporter("zoo", "zoo").extract(files, commit)
-    return {(c.symbol_key, c.aspect): c.raw_value for c in claims}
+    return {(c.symbol_key, c.aspect): c.raw_value for c in claims_at(scenario, label)}
 
 
 def _cases() -> list[tuple[Scenario, Expectation]]:
