@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import re
 from collections.abc import Sequence
 
-CANONICALIZER_VERSION = "1"
+CANONICALIZER_VERSION = "2"
 
-_PEP604_UNION = re.compile(r"\s*\|\s*")
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -52,22 +52,122 @@ def canonical_literal(value: str) -> str | None:
         parsed = ast.literal_eval(value)
     except (ValueError, SyntaxError):
         return None
+    if isinstance(parsed, float) and _is_whole_number(parsed):
+        return repr(int(parsed))  # `100` and `100.0` are the same default
     return repr(parsed)
 
 
-def canonical_type_annotation(annotation: str) -> str:
-    """Canonical form of a type annotation string.
+def _is_whole_number(value: float) -> bool:
+    """Whether a float is finite, integer-valued, and small enough to be written exactly."""
+    return math.isfinite(value) and value == int(value) and abs(value) < _MAX_EXACT_INT
 
-    Normalizes PEP 604 unions to a fixed member order and collapses
-    incidental whitespace, so `int | None` and `None | int` (and
-    `Optional[int]`'s own textual variants, once the extractor normalizes
-    to `|` first) compare equal.
+
+# The builtin generics, which typing spells with a capital (ADR-0007 Amendment 3, A).
+_BUILTIN_GENERICS = {
+    "List": "list",
+    "Dict": "dict",
+    "Tuple": "tuple",
+    "Set": "set",
+    "FrozenSet": "frozenset",
+    "Type": "type",
+}
+_TYPING_MODULES = frozenset({"typing", "typing_extensions"})
+_VERBATIM = frozenset({"Literal", "Annotated"})  # their arguments are values, not types
+_MAX_EXACT_INT = 10**15
+
+
+def canonical_type_annotation(annotation: str) -> str:
+    """Canonical form of a type annotation string (ADR-0007 Amendment 3).
+
+    Two spellings of the same type must produce the same string, because drift detection
+    compares strings. The form removes quotation marks at any depth, drops a ``typing.``
+    qualifier, spells the builtin generics in lower case, rewrites ``Optional`` and ``Union``
+    as unions, and orders and de-duplicates the members. ``None`` is a member like any other:
+    ``int`` and ``int | None`` are different types (ADR-0007 Amendment 4). The contents of
+    ``Literal[...]`` are values and are left as written.
+
+    Text that is not an expression has only its whitespace collapsed.
     """
     collapsed = _WHITESPACE.sub(" ", annotation.strip())
-    if "|" in collapsed:
-        members = sorted(m.strip() for m in _PEP604_UNION.split(collapsed))
-        return " | ".join(members)
-    return collapsed
+    try:
+        tree = ast.parse(collapsed, mode="eval").body
+    except (SyntaxError, ValueError, RecursionError):
+        return collapsed
+    return ast.unparse(_canonical_node(tree))
+
+
+def _short_name(node: ast.expr) -> str | None:
+    """``List`` for ``List`` and for ``typing.List``; ``None`` for anything else."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        return node.attr if node.value.id in _TYPING_MODULES else None
+    return None
+
+
+def _members(node: ast.expr) -> list[ast.expr]:
+    """The members of a (possibly nested) ``a | b | c``."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return [*_members(node.left), *_members(node.right)]
+    return [node]
+
+
+def _union(members: list[ast.expr]) -> ast.expr:
+    """Canonical union of already-canonical members: flattened, de-duplicated, ordered."""
+    flat: dict[str, ast.expr] = {}
+    for member in members:
+        for part in _members(member):
+            flat.setdefault(ast.unparse(part), part)
+    ordered = [flat[key] for key in sorted(flat)]
+    result = ordered[0]
+    for member in ordered[1:]:
+        result = ast.BinOp(left=result, op=ast.BitOr(), right=member)
+    return result
+
+
+def _canonical_node(node: ast.expr) -> ast.expr:
+    """The canonical form of one annotation expression, recursively."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:  # a quoted forward reference is the type it names
+            inner = ast.parse(node.value.strip(), mode="eval").body
+        except (SyntaxError, ValueError, RecursionError):
+            return node
+        return _canonical_node(inner)
+    if isinstance(node, ast.Name | ast.Attribute):
+        name = _short_name(node)
+        if name is None:
+            return node
+        return ast.Name(id=_BUILTIN_GENERICS.get(name, name), ctx=ast.Load())
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _union([_canonical_node(m) for m in _members(node)])
+    if isinstance(node, ast.Subscript):
+        return _canonical_subscript(node)
+    if isinstance(node, ast.List):
+        return ast.List(elts=[_canonical_node(e) for e in node.elts], ctx=ast.Load())
+    if isinstance(node, ast.Tuple):
+        return ast.Tuple(elts=[_canonical_node(e) for e in node.elts], ctx=ast.Load())
+    return node
+
+
+def _canonical_subscript(node: ast.Subscript) -> ast.expr:
+    base = _short_name(node.value)
+    if base in _VERBATIM:
+        return ast.Subscript(
+            value=ast.Name(id=base, ctx=ast.Load()), slice=node.slice, ctx=ast.Load()
+        )
+    arguments = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+    canonical_args = [_canonical_node(a) for a in arguments]
+    if base == "Optional":
+        return _union([*canonical_args, ast.Constant(value=None)])
+    if base == "Union":
+        return _union(canonical_args)
+    head = _canonical_node(node.value)
+    slice_: ast.expr = (
+        ast.Tuple(elts=canonical_args, ctx=ast.Load())
+        if isinstance(node.slice, ast.Tuple)
+        else canonical_args[0]
+    )
+    return ast.Subscript(value=head, slice=slice_, ctx=ast.Load())
 
 
 def canonical_version(version: str) -> str | None:
