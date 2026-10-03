@@ -379,19 +379,19 @@ class IngestOneCommit:
 
 
 def _doc_changes(plans: list[_DocPlan]) -> DocChanges:
-    """Which claims this commit is about to withdraw, and how many it will newly write."""
+    """Which claims this commit is about to withdraw, and the values it will newly write."""
     retracting: set[str] = set()
-    asserting: dict[str, int] = defaultdict(int)
+    asserting: dict[str, list[str]] = defaultdict(list)
     for plan in plans:
         for path in plan.paths:
             wanted = plan.wanted.get(path, {})
             for existing in plan.existing.get(path, []):
                 if (existing.fact_key, existing.value) not in wanted:
                     retracting.add(existing.claim_id)
-                    asserting.setdefault(existing.fact_key, 0)  # the slot is touched
+                    asserting.setdefault(existing.fact_key, [])  # the slot is touched
             for fact_key, value in wanted:
                 if (fact_key, value) not in plan.present[path]:
-                    asserting[fact_key] += 1
+                    asserting[fact_key].append(value)
     return DocChanges(frozenset(retracting), dict(asserting))
 
 

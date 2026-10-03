@@ -17,7 +17,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 
 from plumbline.application.ports import CommitRef, KnowledgeBase, PresentClaim, RawClaim
-from plumbline.domain import anchors
+from plumbline.domain import anchors, typecompare
 from plumbline.domain.anchors import Anchor
 from plumbline.domain.projection import SymbolState, is_projectable, project
 
@@ -34,11 +34,12 @@ class DocChanges:
 
     Attributes:
         retracting: Ids of the doc claims about to be withdrawn.
-        asserting: For each fact key, how many new doc claims are about to be written.
+        asserting: For each fact key, the values of the new doc claims about to be written
+            (an empty list means the slot is touched but nothing new is written).
     """
 
     retracting: frozenset[str]
-    asserting: dict[str, int]
+    asserting: dict[str, list[str]]
 
     @property
     def touched_facts(self) -> set[str]:
@@ -93,10 +94,18 @@ class Projector:
                 1
                 for c in present
                 if c.author != PROJECTOR_PRINCIPAL and c.claim_id not in changes.retracting
-            ) + changes.asserting.get(fact_key, 0)
+            ) + len(changes.asserting.get(fact_key, []))
             wanted: dict[tuple[str, str], RawClaim] = {}
             if documented:
                 claim = self._projection(commit, symbol_key, aspect, cache)
+                if claim is not None and typecompare.is_type_aspect(aspect):
+                    stated = [
+                        c.value
+                        for c in present
+                        if c.author != PROJECTOR_PRINCIPAL and c.claim_id not in changes.retracting
+                    ] + changes.asserting.get(fact_key, [])
+                    if typecompare.should_abstain(claim.raw_value, stated):
+                        claim = None  # a difference we cannot prove is not drift (ADR-0007 A3/A4)
                 if claim is None:
                     abstained += 1
                 else:
