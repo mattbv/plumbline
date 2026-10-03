@@ -45,6 +45,9 @@ from plumbline.application.symbol_facts import (
 from plumbline.domain import anchors
 from plumbline.domain.anchors import Anchor
 
+_OPTIONAL_FIELDS = frozenset({"is_deprecated", "namespace_closed", "signature_json"})
+"""Fields the importer states only when it can. If it stops, the old value must go too."""
+
 
 @dataclass(frozen=True, slots=True)
 class DeferredClaim:
@@ -80,6 +83,8 @@ class IngestReport:
             doc claim left the slot.
         abstained: Documented slots in the affected set whose code value could not be
             proven (the PRD's abstention-rate numerator).
+        fields_withdrawn: L1 fields the importer stopped stating (e.g. a signature, once a
+            decorator it cannot see through was added), retracted rather than left stale.
     """
 
     written: int = 0
@@ -92,6 +97,7 @@ class IngestReport:
     projected: int = 0
     projections_withdrawn: int = 0
     abstained: int = 0
+    fields_withdrawn: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +169,7 @@ class IngestOneCommit:
             projected=projected,
             projections_withdrawn=withdrawn,
             abstained=projection.abstained,
+            fields_withdrawn=report.fields_withdrawn,
         )
 
     def _facts_affected_by(self, changed: frozenset[str]) -> set[str]:
@@ -293,6 +300,7 @@ class IngestOneCommit:
         )
 
         written = 0
+        withdrawn_fields = 0
         changed: set[str] = set()
         conflicts = list(find_conflicts(claims))
         for symbol_key, fields in snapshot.items():
@@ -313,6 +321,13 @@ class IngestOneCommit:
                     )
                     written += 1
                     changed.add(symbol_key)
+            # The KB mirrors what the importer says *now*: a field it once stated and no
+            # longer does is withdrawn, not left standing as if still true.
+            stated = fields.as_mapping()
+            for field_name in sorted((_OPTIONAL_FIELDS & current.keys()) - stated.keys()):
+                self.kb.withdraw_code_fact(symbol_key, field_name, as_of=commit.committed_at)
+                withdrawn_fields += 1
+                changed.add(symbol_key)
 
         removed = self._remove_vanished(commit, snapshot, deleted | analyzed)
         unanalyzed = tuple(
@@ -323,6 +338,7 @@ class IngestOneCommit:
             removed=tuple(removed),
             unanalyzed=unanalyzed,
             conflicts=tuple(conflicts),
+            fields_withdrawn=withdrawn_fields,
         )
         return report, frozenset(changed | set(removed))
 
