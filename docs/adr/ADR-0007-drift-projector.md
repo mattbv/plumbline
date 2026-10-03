@@ -240,3 +240,107 @@ will reuse this ordering contract.
   made existing parameters look missing was the most serious defect found.
 
 See [the first run on a real repository](../first-real-run.md).
+
+## Amendment 3: what measuring precision on real code showed (proposed)
+
+[The seeded-drift evaluation](../seeded-drift-evaluation.md) found that recall is not the
+problem: every injected drift was found. Precision is. An unmodified, released package
+(`rich`) opened hundreds of contradictions, and reading them showed that most of the
+type-related ones are not drift. The cause is in how types are compared, which this ADR
+had left to string equality. Four changes follow, in the order they matter.
+
+### A. One canonical form for a type, applied to both sides
+
+Ontolith routes by value equality, so two statements agree only if they are stored as the
+same string. "Equal by meaning" therefore has to be made true in the stored values, by one
+function used by the code importer and the docstring importer alike. The canonical form:
+
+- removes quotation marks anywhere in the annotation, not only around the whole of it
+  (`Iterable['Segment']` and `Iterable[Segment]` are the same type);
+- drops a `typing.` or `typing_extensions.` qualifier;
+- spells the builtin generics in lower case (`List` and `list`, `Dict` and `dict`, `Tuple`
+  and `tuple`, `Set`, `FrozenSet`, `Type`);
+- rewrites `Optional[X]` and `Union[A, B]` as unions, and orders the members.
+
+Today the importers already do the fourth step and the qualifier removal for a plain
+annotation. They do not remove quotation marks nested inside an annotation, and nothing
+lower-cases the builtin generics.
+
+### B. Nullability is not compared
+
+`None` is dropped from a union that has other members, in the canonical form. A bare `None`
+(a return type) is kept.
+
+This is a deliberate loss. Drift that only adds or removes `None` from a type will not be
+reported. The evidence for accepting it: in the measured package, the large majority of
+type findings that differed only by `None` came from a docstring entry that itself says
+`optional`. In the Google docstring style `optional` means *the argument may be omitted*,
+which is true of any parameter with a default and says nothing about `None`. The tempting
+alternative, adding `| None` when a docstring says `optional`, asserts something the author
+did not write and would turn `x: int = 1` documented as `(int, optional)` into a false report.
+If nullability drift proves worth finding it should be its own aspect with its own rule,
+not a side effect of a type comparison.
+
+### C. A type disagreement that cannot be proven abstains
+
+After A and B, if the code's type and a doc claim's type still differ, the projector does not
+state the code's type when the difference is not provable:
+
+- either type contains a name that is **not resolved**, where resolved means a builtin or a
+  name from `typing` or `collections.abc`. Any other name may be an alias for something the
+  documented type is a case of (a `Literal` alias documented as `str`, a union alias
+  documented as one of its members), and a single-file analysis cannot see through it; or
+- one side is a bare generic and the other a parameterization of it (`Callable` documented
+  against `Callable[[Any], Any]`): the docs left the parameters out.
+
+When both types are made only of resolved names and still differ (`int` against `str`,
+`Iterable[int]` against `List[int]`), the projection is stated and the disagreement is
+reported as before.
+
+The cost, stated plainly: swapping one user-defined class name for another
+(`Style` for `Segment`) is no longer reported, because either could be an alias. This is the
+abstention-first rule applied consistently, and it is the right place to revisit once a
+symbol resolver exists (PRD ING-6).
+
+### D. Two smaller corrections from the same reading
+
+- **A quoted word is not the keyword.** In `Justify method: "default", "left", "right"` the
+  word *default* is a value, not "defaults to". The docstring importer must read
+  `default(s) to/is/=/:` only outside quotation marks, and as a stated default only when a
+  value follows.
+- **An integer-valued float and the integer are the same default.** `100` and `100.0` compare
+  equal in a signature. The canonical literal for a float with an integer value is the
+  integer's, except that a `bool` is never treated as a number.
+
+Left alone, on purpose: a default written with backticks (``Defaults to ``None```) is not read
+by the docstring importer at all, which is a recall gap and not a precision problem; and a
+docstring that spells a newline as `"\\n"` genuinely disagrees with the code, if only
+cosmetically.
+
+### Consequences
+
+- **The projector's input widens, for type slots only.** Abstention under C needs the values
+  of the doc claims on the slot, and the plan step currently receives only *how many* new doc
+  claims a commit asserts (`DocChanges.asserting`). It must carry the values. The rule stays
+  pure: a function of the code's state and of the doc values.
+- **A projection can now come and go as the docs change.** A slot that abstains because the
+  doc says `str` stops abstaining when the doc is edited to `Style`. The four-pass order
+  already handles a projection appearing or leaving per touched fact; a projection that is a
+  party to an open dispute is deferred and reported, as before.
+- **Stored values change.** Type and default claims written before this change are in the old
+  form. The canonicalizer version bump already triggers a re-projection (PRD §7.4, ING-5), and
+  doc claims are re-extracted when their file is next touched.
+- **Recall must be re-measured.** The injected type drifts (`int` for `str` and back) are made
+  of resolved names and must still be found. This is the check that C did not buy precision by
+  going blind: the evaluation is re-run and the result recorded, including any category that
+  falls.
+
+### How it will be verified
+
+1. Property tests that the canonical form is idempotent, ignores member order and quotation,
+   and never makes two types with different resolved names equal.
+2. Zoo scenarios for each kind: representation-only, `optional`, an unresolved alias, a bare
+   generic, and a resolved disagreement that must still be reported.
+3. The seeded-drift evaluation re-run on `rich` and on Ontolith. Recall on injected drift
+   must not fall. The unmodified `rich` findings are re-read, and the write-up says how many of
+   the earlier false positives are gone, and what is left and why.
