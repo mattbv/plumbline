@@ -257,13 +257,14 @@ function used by the code importer and the docstring importer alike. The canonic
 
 - removes quotation marks anywhere in the annotation, not only around the whole of it
   (`Iterable['Segment']` and `Iterable[Segment]` are the same type);
-- drops a `typing.` or `t.` qualifier;
+- drops a `typing.` or `typing_extensions.` qualifier;
 - spells the builtin generics in lower case (`List` and `list`, `Dict` and `dict`, `Tuple`
   and `tuple`, `Set`, `FrozenSet`, `Type`);
 - rewrites `Optional[X]` and `Union[A, B]` as unions, and orders the members.
 
-Today the importers do the third and fourth steps for a plain annotation and none of the
-first two for a nested one.
+Today the importers already do the fourth step and the qualifier removal for a plain
+annotation. They do not remove quotation marks nested inside an annotation, and nothing
+lower-cases the builtin generics.
 
 ### B. Nullability is not compared
 
