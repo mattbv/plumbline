@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -166,7 +166,12 @@ This is what closes M0's exit criterion, so it is fixed here:
 - Waivers (DRF-7) are M2: the projector will skip a value covered by an active
   `Waiver`; this ADR only reserves that hook.
 
-## Open questions for you
+## Open questions (resolved)
+
+All five recommendations were accepted as written: slot-level projection; decorated callables
+abstain at the source; `exists = false` for a symbol L1 has never seen when every enclosing
+namespace is closed; a stuck projection is deferred and reported; and `deprecated = false`
+is projected.
 
 1. **Slot-level projection** (only slots that have a claim) rather than DRF-2's
    symbol-level reading. I recommend slot-level.
@@ -188,3 +193,34 @@ This is what closes M0's exit criterion, so it is fixed here:
 `cli.*`, `env.*` and `project.*` from importers that do not exist yet. Each is a
 separate producer of projections into the same slots, under its own principal, and
 will reuse this ordering contract.
+
+## Amendment 1: what implementing it showed
+
+- **A dispute outlives its own premise, and that is by design.** If the README names a
+  function the closed module never defined, the projector states `exists = false` and a
+  dispute opens. If the module then gains a `__getattr__`, that projection is no longer
+  provable, but the projector is a party to the dispute and Ontolith refuses its
+  retraction. The projection is deferred and the dispute stays for a human, with the report
+  saying the code has changed under it. This is the same "no auto-resolution" principle as
+  PRD §7.6. The case where the projection is **not** in a dispute (a changelog that agrees
+  the name is gone) is withdrawn and later restored cleanly. Both are zoo scenarios.
+- **A namespace change must re-evaluate the facts beneath it.** Whether a child is provably
+  absent depends on its parent's closure, so a change to a module or class re-plans every
+  fact under it (`facts_under`), even though the children did not change. Without this, a
+  module becoming dynamic would leave stale "does not exist" projections behind. This
+  was found by a scenario, not foreseen.
+- **A human resolution retracts the projection too.** Resolving a contradiction keeps one
+  winner and retracts every other member, the projection included. The next commit that
+  touches the file re-states it. If the docs and the code still disagree, a *new* dispute
+  opens between exactly those two authors; the old one does not revive.
+- **Verified against label-driven stand-ins for the unwritten importers.** Plumbline has a
+  real code importer, a real docstring importer, and now the projector, but no README, docs
+  or CHANGELOG importers. The zoo's 50 labeled L2 outcomes are checked through the whole
+  pipeline, with `plumb-readme`, `plumb-docs` and `plumb-changelog` claims supplied by a
+  test double that emits exactly what the labels say (`tests/zoo/standins.py`). That tests
+  the projector, the pass order, and Ontolith's routing for real. Whether a future real
+  importer extracts the same claims is that importer's own test, against the same labels.
+- **Known limits, accepted.** A required parameter and a non-literal default are
+  indistinguishable in `signature_json` (ADR-0004), so a documented default can only be
+  checked where the code states one. A submodule the importer never analyzed (excluded,
+  or unparseable) under a closed package would be projected absent.
