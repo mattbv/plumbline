@@ -105,6 +105,14 @@ class TestLintCatchesMistakes:
         )
         assert any("members imply doc_vs_code" in p for p in problems)
 
+    def test_withheld_value_belongs_on_an_abstention_only(self) -> None:
+        problems = oracle.lint(_with(withheld_value="1"))
+        assert any("withheld_value belongs on an ABSTAIN" in p for p in problems)
+
+    def test_a_withheld_abstention_is_clean(self) -> None:
+        clean = _with(outcome=Outcome.ABSTAIN, code_value=None, withheld_value="1")
+        assert oracle.lint(clean) == []
+
     def test_unknown_aspect(self) -> None:
         assert any("not in the catalog" in p for p in oracle.lint(_with(aspect="param.x.colour")))
 

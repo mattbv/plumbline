@@ -506,6 +506,167 @@ DRIFT_PERSISTS = Scenario(
     ),
 )
 
+_TS = "plumb-docstring"
+
+
+def _typed_scenario(
+    scenario_id: str,
+    title: str,
+    source: str,
+    expectations: tuple[tuple[str, str, Outcome, str, str, DriftClass | None, str], ...],
+) -> Scenario:
+    """One commit with one module, and L2 expectations ``(symbol tail, aspect, outcome,
+    code value, doc value, drift class, note)``. For an ABSTAIN the code value is the one the
+    importer states and the projector withholds."""
+    return Scenario(
+        id=scenario_id,
+        title=title,
+        prd_refs=("§14#10",),
+        commits=(
+            Commit(
+                "c1",
+                "Add the module",
+                {**package(scenario_id), f"src/{scenario_id}/m.py": text(source)},
+            ),
+        ),
+        expectations=tuple(
+            Expectation(
+                "c1", sym(scenario_id, tail), aspect, Layer.L2, outcome,
+                code_value=None if outcome is Outcome.ABSTAIN else code,
+                withheld_value=code if outcome is Outcome.ABSTAIN else None,
+                claims=((_TS, doc),), drift_class=drift, note=note,
+            )
+            for tail, aspect, outcome, code, doc, drift, note in expectations
+        ),
+    )  # fmt: skip
+
+
+TYPE_REPRESENTATION_ONLY = _typed_scenario(
+    "type_representation_only",
+    "Docs and annotations spell the same types differently: quotes, List, Optional",
+    '''
+    from typing import Dict, List, Optional
+
+    def render(items: List["Segment"], style: Optional[Dict[str, int]] = None) -> None:
+        """Render items.
+
+        Args:
+            items (list[Segment]): The items.
+            style (dict[str, int], optional): A style map.
+        """
+    ''',
+    (
+        ("m.render", "param.items.type", Outcome.CORROBORATE,
+         "list[Segment]", "list[Segment]", None,
+         "A quoted forward reference and a typing.List are the same type as the docs' spelling."),
+        ("m.render", "param.style.type", Outcome.CORROBORATE, "None | dict[str, int]",
+         "None | dict[str, int]", None,
+         "`(dict[str, int], optional)` states that None is allowed, as `Optional[...]` does."),
+    ),
+)  # fmt: skip
+
+TYPE_OPTIONAL_BUT_STRICTER = _typed_scenario(
+    "type_optional_but_stricter",
+    "Docs say `(int, optional)` for a parameter with a default whose annotation is plain int",
+    '''
+    def retry(count: int = 5) -> None:
+        """Retry.
+
+        Args:
+            count (int, optional): How many times.
+        """
+    ''',
+    (
+        ("m.retry", "param.count.type", Outcome.ABSTAIN, "int", "None | int", None,
+         "`optional` means omittable here, not nullable: the docs permit more than the code "
+         "does, which is not provably wrong."),
+    ),
+)  # fmt: skip
+
+TYPE_ALIAS_ABSTAINS = _typed_scenario(
+    "type_alias_abstains",
+    "The annotation is a name the analysis cannot resolve; the docs give its base type",
+    '''
+    from typing import Literal
+
+    JustifyMethod = Literal["left", "right", "center"]
+
+    def align(mode: JustifyMethod = "left") -> None:
+        """Align.
+
+        Args:
+            mode (str): One of left, right or center.
+        """
+    ''',
+    (
+        ("m.align", "param.mode.type", Outcome.ABSTAIN, "JustifyMethod", "str", None,
+         "JustifyMethod may be an alias for a case of str; that cannot be told from here."),
+    ),
+)  # fmt: skip
+
+TYPE_BARE_GENERIC = _typed_scenario(
+    "type_bare_generic",
+    "Docs name `Callable`; the annotation gives its parameters",
+    '''
+    from typing import Callable
+
+    def on_event(handler: Callable[[int], str]) -> None:
+        """Register.
+
+        Args:
+            handler (Callable): The handler.
+        """
+    ''',
+    (
+        ("m.on_event", "param.handler.type", Outcome.ABSTAIN,
+         "Callable[[int], str]", "Callable", None,
+         "The docs left the parameters out; that is brevity, not disagreement."),
+    ),
+)  # fmt: skip
+
+TYPE_RESOLVED_DISAGREEMENT = _typed_scenario(
+    "type_resolved_disagreement",
+    "Docs and annotations disagree, using only types the analysis can resolve",
+    '''
+    from typing import Iterable
+
+    def total(count: int, ids: Iterable[int]) -> None:
+        """Total.
+
+        Args:
+            count (str): How many.
+            ids (List[int]): The ids.
+        """
+    ''',
+    (
+        ("m.total", "param.count.type", Outcome.CONTRADICT, "int", "str", DriftClass.DOC_VS_CODE,
+         "int against str is a provable disagreement."),
+        ("m.total", "param.ids.type", Outcome.CONTRADICT, "Iterable[int]", "list[int]",
+         DriftClass.DOC_VS_CODE, "The docs promise a list; the code accepts any iterable."),
+    ),
+)  # fmt: skip
+
+DEFAULT_FORMS = _typed_scenario(
+    "default_forms",
+    "Defaults written as `100` for a float, and a sentence that quotes the word default",
+    '''
+    def scale(total: float = 100.0, justify=None) -> None:
+        """Scale.
+
+        Args:
+            total (float): The total. Defaults to 100.
+            justify (str): One of "default", "left" or "right". Defaults to None.
+        """
+    ''',
+    (
+        ("m.scale", "param.total.default", Outcome.CORROBORATE, "100", "100", None,
+         "100 and 100.0 are the same default."),
+        ("m.scale", "param.justify.default", Outcome.CORROBORATE, "None", "None", None,
+         'The quoted word "default" is a value in the sentence, not the keyword.'),
+    ),
+)  # fmt: skip
+
+
 SCENARIOS: tuple[Scenario, ...] = (
     SIG_CHANGE_DOCS_UPDATED,
     SIG_CHANGE_DOCS_STALE,
@@ -513,6 +674,12 @@ SCENARIOS: tuple[Scenario, ...] = (
     CODE_DEFECT_REGRESSION,
     KWARG_REMOVED,
     TYPE_OMITS_NONE,
+    TYPE_REPRESENTATION_ONLY,
+    TYPE_OPTIONAL_BUT_STRICTER,
+    TYPE_ALIAS_ABSTAINS,
+    TYPE_BARE_GENERIC,
+    TYPE_RESOLVED_DISAGREEMENT,
+    DEFAULT_FORMS,
     REQUIRES_PYTHON_BUMP,
     DRIFT_PERSISTS,
 )

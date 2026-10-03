@@ -223,6 +223,11 @@ def _lint_expectation(scenario: Scenario, index: int, exp: Expectation) -> list[
     ):
         problems.append(f"{where}: introduced_in is after the commit it is observed at")
 
+    if exp.withheld_value is not None and (
+        exp.outcome is not Outcome.ABSTAIN or exp.code_value is not None
+    ):
+        problems.append(f"{where}: withheld_value belongs on an ABSTAIN with no code_value")
+
     aspect = resolve_aspect(exp.aspect)
     if aspect is None:
         problems.append(f"{where}: aspect is not in the catalog")
@@ -230,6 +235,7 @@ def _lint_expectation(scenario: Scenario, index: int, exp: Expectation) -> list[
         for label, value in [
             ("code_value", exp.code_value),
             ("previous_code_value", exp.previous_code_value),
+            ("withheld_value", exp.withheld_value),
         ]:
             if value is not None and (why := value_problem(aspect, value)):
                 problems.append(f"{where}: {label} {value!r}: {why}")
