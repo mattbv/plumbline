@@ -152,3 +152,19 @@ whose defining file changed in this commit but which the importer no longer
 finds. It needs a way to ask the KB for the symbols defined in a given path,
 and a rule for deleted files (which `read_file_at` cannot read). That is its
 own small decision and follows this one.
+
+## Amendment 2: the knowledge base mirrors what the importer says *now*
+
+ADR-0004 said what a missing key in `signature_json` means ("the importer abstained") but not
+what happens across time. If the importer once stated a signature and later cannot (a
+decorator it cannot see through was added, a default stopped being a literal, the name became
+ambiguous), the previous value used to stay in the knowledge base as if it were still true.
+A first run on a real repository showed the consequence: stale signatures were projected, and
+parameters that exist were reported as missing.
+
+The rule is now: **a field the importer once stated and no longer does is withdrawn** (its
+assertion is retracted, closing its window; the history keeps the old value). The optional
+fields are `signature_json`, `is_deprecated` and `namespace_closed`; `kind`, `present` and
+`defined_at` are always stated. This also supersedes ADR-0005's sentence that an
+`ambiguous` symbol's detail facts "stay at their last values": they are withdrawn too, and
+return when the name is unambiguous again.
