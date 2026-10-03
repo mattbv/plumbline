@@ -9,7 +9,7 @@ project actually is against that plan, updated as work lands.
 | Milestone | Exit criteria | Status |
 |---|---|---|
 | **M0 — Foundations** | Drift zoo ingestion is deterministic across two runs; every seeded scenario's routing outcome is asserted by tests | **Met, with one caveat.** Two ingestions of the zoo give byte-identical knowledge-base snapshots, and every labeled routing outcome is checked end to end against a real Ontolith KB. The caveat: README, docs and CHANGELOG claims come from label-driven stand-ins (`tests/zoo/standins.py`), because those importers do not exist yet. The zoo is still short of the PRD's ~80 scenarios. |
-| **M1 — Drift Radar** (0.1) | Drift-zoo precision ≥95% / recall ≥90%; ≥90% precision on a hand-labeled sample from 3 real repos | **In progress; neither criterion measured yet.** Done: code importer (ING-1), docstring importer (part of ING-2), the drift projector (DRF-1 to 4), `plumb ingest` and `plumb drift`, a Git reader. First real-repository run: [first-real-run.md](first-real-run.md). |
+| **M1 — Drift Radar** (0.1) | Drift-zoo precision ≥95% / recall ≥90%; ≥90% precision on a hand-labeled sample from 3 real repos | **In progress; real-code precision measured on one repo and not met.** Done: code importer (ING-1), docstring importer (part of ING-2), the drift projector (DRF-1 to 4), `plumb ingest` and `plumb drift`, a Git reader, and [a seeded-drift measurement](seeded-drift-evaluation.md). Recall on injected drift: 100% on 338 injections across two repositories. Precision on unmodified real code: at least 48% of 228 findings on `rich` are false positives (type comparison is too strict about representation and `optional`). |
 | **M2 — Reconcile** (0.2) | Full J2 → J3 → merge → corroboration loop on a real repo with a real agent; zero direct-write paths proven by a closed-set test | Not started. Deferral under dispute and the retract-then-assert protocol (ADR-0006, ADR-0007) are the groundwork. |
 | **M3 — Publish & Harden** (1.0) | All P0 requirements met; budgets green; no open high-severity security findings; 5 production design partners | Not started |
 
@@ -31,9 +31,9 @@ project actually is against that plan, updated as work lands.
 
 In order:
 
-1. **Measure recall on real code.** Inject known drift into real code (change a default,
-   rename a parameter, delete a documented function) and check that every injection is found
-   and nothing else is. Zero findings on a well-kept project says nothing about what was missed.
+1. **Fix precision on real code** ([seeded-drift-evaluation.md](seeded-drift-evaluation.md)):
+   compare types modulo representation and a documented `optional` (an ADR-0007 amendment first),
+   abstain where an alias cannot be resolved, fix the quoted-word default parse, then re-measure.
 2. **README, docs-page and CHANGELOG importers**, with the symbol resolver they need
    (PRD ING-6, including an `alias_of` for re-exports). Until then only docstring drift is found.
 3. **The remaining fact producers:** `cli.*`, `env.*` and `project.*` importers, and the lineage

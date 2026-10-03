@@ -73,7 +73,7 @@ allow-direct-references = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "evaluation"]
 # docs/ is prose (the PRD, ADRs) -- it happens to contain fenced Python
 # snippets, but it's not project source and shouldn't be reformatted.
 extend-exclude = ["docs"]
