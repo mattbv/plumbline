@@ -189,6 +189,23 @@ class TestHistory:
         assert len(GitRepoReader(repo, branch="release").first_parent_history()) == 2
 
 
+class TestDescribe:
+    def test_one_commit_matches_what_the_full_history_reports_for_it(self, repo: Path) -> None:
+        commit(repo, "a", {"a.py": "1\n", "b.md": "x"}, when="2024-01-01T00:00:00+0000")
+        second = commit(repo, "b", {"a.py": "2\n", "c.bin": "z"}, when="2024-01-02T00:00:00+0000")
+        reader = GitRepoReader(repo)
+        assert reader.describe(second) == reader.first_parent_history()[1]
+
+    def test_the_root_commit(self, repo: Path) -> None:
+        first = commit(repo, "a", {"a.py": "1\n"}, when="2024-01-01T00:00:00+0000")
+        assert GitRepoReader(repo).describe(first).changed_paths == ("a.py",)
+
+    def test_an_unknown_commit_is_an_error(self, repo: Path) -> None:
+        commit(repo, "a", {"a.py": "1\n"})
+        with pytest.raises(GitError):
+            GitRepoReader(repo).describe("0" * 40)
+
+
 class TestWindow:
     def test_the_first_commit_in_a_window_carries_the_whole_tree(self, repo: Path) -> None:
         commit(repo, "old", {"old.py": "1\n", "keep.py": "k\n"}, when="2024-01-01T00:00:00+0000")
