@@ -260,3 +260,66 @@ class TestRetractClaim:
 
         assert outcome is RetractOutcome.DISPUTED
         assert ("plumb-docs", "45", "flagged") in _values(kb)  # untouched
+
+
+class TestFactReads:
+    """The reads the drift projector plans from (ADR-0007)."""
+
+    def _kb_with_claims(self, tmp_path: Path) -> OntolithKnowledgeBase:
+        kb = _kb(tmp_path / "kb.db")
+        kb.record_claim(_claim("30"), author_principal="plumb-readme", as_of=WHEN)
+        kb.record_claim(
+            _claim("true", aspect="param.x.exists"), author_principal="plumb-readme", as_of=WHEN
+        )
+        kb.record_claim(
+            _claim("true", symbol="py:m.f.inner", aspect="exists"),
+            author_principal="plumb-readme",
+            as_of=WHEN,
+        )
+        kb.record_claim(
+            _claim("true", symbol="py:other.g", aspect="exists"),
+            author_principal="plumb-readme",
+            as_of=WHEN,
+        )
+        return kb
+
+    def test_the_projector_principal_is_registered(self, tmp_path: Path) -> None:
+        assert _kb(tmp_path / "kb.db")._kb.get_principal("plumb-projector") is not None
+
+    def test_facts_about_a_symbol_are_exactly_its_own(self, tmp_path: Path) -> None:
+        kb = self._kb_with_claims(tmp_path)
+        assert kb.facts_about("py:m.f") == ["py:m.f#param.x.default", "py:m.f#param.x.exists"]
+        assert kb.facts_about("py:nobody") == []
+
+    def test_facts_under_a_namespace_are_its_descendants_only(self, tmp_path: Path) -> None:
+        kb = self._kb_with_claims(tmp_path)
+        assert kb.facts_under("py:m") == [
+            "py:m.f#param.x.default", "py:m.f#param.x.exists", "py:m.f.inner#exists",
+        ]  # fmt: skip
+        assert kb.facts_under("py:m.f.inner") == []
+        assert kb.facts_under("py:m.fo") == []  # a name prefix is not a namespace prefix
+
+    def test_claims_on_a_fact_come_from_every_author(self, tmp_path: Path) -> None:
+        kb = self._kb_with_claims(tmp_path)
+        kb.record_claim(
+            _claim("30", path="src/m.py"), author_principal="plumb-projector", as_of=WHEN
+        )
+        claims = kb.claims_on("py:m.f#param.x.default")
+        assert [(c.author, c.value, c.path) for c in claims] == [
+            ("plumb-projector", "30", "src/m.py"),
+            ("plumb-readme", "30", "README.md"),
+        ]
+
+    def test_claims_on_excludes_withdrawn_ones_and_unknown_facts(self, tmp_path: Path) -> None:
+        kb = self._kb_with_claims(tmp_path)
+        [claim] = kb.claims_on("py:m.f#param.x.default")
+        kb.retract_claim(claim.claim_id, author_principal="plumb-readme", as_of=WHEN)
+        assert kb.claims_on("py:m.f#param.x.default") == []
+        assert kb.claims_on("py:nope#exists") == []
+
+    def test_a_flagged_claim_in_a_dispute_is_still_on_the_fact(self, tmp_path: Path) -> None:
+        kb = self._kb_with_claims(tmp_path)
+        kb.record_claim(
+            _claim("45", path="src/m.py"), author_principal="plumb-projector", as_of=WHEN
+        )
+        assert {c.value for c in kb.claims_on("py:m.f#param.x.default")} == {"30", "45"}

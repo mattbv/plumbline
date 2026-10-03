@@ -59,6 +59,10 @@ class ZooHistory:
                 self.steps.append(ZooStep(scenario, commit.label, ref))
                 self._at[sha] = (scenario, commit.label)
 
+    def at(self, sha: str) -> tuple[Scenario, str]:
+        """The ``(scenario, commit label)`` a synthetic SHA stands for."""
+        return self._at[sha]
+
     def first_parent_history(self, *, since: datetime | None = None) -> list[CommitRef]:
         """All commits, oldest first."""
         return [step.ref for step in self.steps if since is None or step.ref.committed_at >= since]

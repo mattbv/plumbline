@@ -535,3 +535,65 @@ class TestKind:
         facts = extract("import os\nclass C:\n    a = 1\ndef f(): ...\n")
         symbols = {sym for sym, _ in facts}
         assert symbols == {sym for sym, aspect in facts if aspect == "kind"}
+
+
+class TestDecoratedCallables:
+    """A decorator can rewrite a signature, so the importer says nothing about it (ADR-0007 §5)."""
+
+    SIGNATURE_ASPECTS = ("param_names", "returns.type")
+
+    def _signature_facts(self, source: str) -> set[str]:
+        facts = extract(source)
+        return {
+            a
+            for (_, a) in facts
+            if a in self.SIGNATURE_ASPECTS or a.startswith(("param.", "raises."))
+        }
+
+    @pytest.mark.parametrize(
+        "decorator",
+        ["@click.command()", "@app.route('/')", "@my_wrapper", "@functools.wraps(g)", "@retry(3)"],
+    )
+    def test_an_unknown_decorator_suppresses_all_signature_facts(self, decorator: str) -> None:
+        source = f"{decorator}\ndef f(a: int = 1) -> str:\n    raise KeyError\n"
+        assert self._signature_facts(source) == set()
+
+    def test_existence_kind_and_deprecation_are_still_stated(self) -> None:
+        facts = extract("@click.command()\ndef f(a): ...\n")
+        assert facts[("py:pkg.mod.f", "exists")] == "true"
+        assert facts[("py:pkg.mod.f", "kind")] == "function"
+        assert facts[("py:pkg.mod.f", "deprecated")] == "false"
+
+    @pytest.mark.parametrize(
+        "decorator",
+        [
+            "@staticmethod",
+            "@classmethod",
+            "@abc.abstractmethod",
+            "@property",
+            "@typing.final",
+            "@deprecated('x')",
+            "@functools.lru_cache(maxsize=None)",
+            "@cache",
+            "@cached_property",
+        ],
+    )
+    def test_decorators_that_preserve_the_signature_do_not_suppress_it(
+        self, decorator: str
+    ) -> None:
+        source = f"class C:\n    {decorator}\n    def f(self, a=1): ...\n"
+        assert "param.a.default" in self._signature_facts(source)
+
+    def test_property_accessors_are_safe(self) -> None:
+        source = (
+            "class C:\n    @property\n    def x(self): ...\n"
+            "    @x.setter\n    def x(self, v): ...\n"
+        )
+        assert extract(source)[("py:pkg.mod.C.x", "exists")] == "true"
+
+    def test_one_unknown_decorator_among_safe_ones_still_suppresses(self) -> None:
+        source = "@staticmethod\n@weird\ndef f(a=1): ...\n"
+        assert self._signature_facts(source) == set()
+
+    def test_undecorated_functions_are_unaffected(self) -> None:
+        assert "param.a.default" in self._signature_facts("def f(a=1): ...\n")

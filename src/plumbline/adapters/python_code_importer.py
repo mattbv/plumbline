@@ -72,6 +72,15 @@ _EXTRACTOR_CONFIDENCE = 1.0
 """Static analysis of the syntax tree: fidelity is certain; only *truth* is in question."""
 
 
+def _signature_is_trustworthy(func: _FunctionNode) -> bool:
+    """Whether the ``def``'s own signature is the callable's effective signature."""
+    for decorator in func.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if (_dotted(target) or "").rsplit(".", 1)[-1] not in _SIGNATURE_SAFE_DECORATORS:
+            return False
+    return True
+
+
 def _is_deprecation_warning(call: ast.Call) -> bool:
     """Whether ``call`` is ``warn(..., DeprecationWarning)`` (positional or ``category=``)."""
     func = _dotted(call.func) or ""
@@ -121,6 +130,18 @@ def _raised_exceptions(func: _FunctionNode) -> list[str]:
 _ALLOWED_CLASS_DECORATORS = frozenset(
     {"final", "runtime_checkable", "deprecated", "type_check_only"}
 )
+_SIGNATURE_SAFE_DECORATORS = frozenset(
+    {
+        "staticmethod", "classmethod", "abstractmethod", "property", "getter", "setter",
+        "deleter", "final", "override", "deprecated", "cache", "lru_cache", "cached_property",
+    }
+)  # fmt: skip
+"""Decorators known to leave a callable's call signature as written (ADR-0007 §5).
+
+Any other decorator may rewrite it (a CLI command decorator, a wrapper that adds
+parameters), so for those the importer states nothing about the signature rather than
+risk a projection that is false at runtime."""
+
 _NAMESPACE_CALLS = frozenset({"globals", "vars", "locals", "exec", "eval"})
 _OPEN_CLASS_METHODS = frozenset({"__getattr__", "__getattribute__"})
 _RECEIVER_MUTATORS = frozenset({"setattr", "delattr", "vars"})
@@ -361,6 +382,8 @@ class PythonCodeImporter:
                     "class member names fully determined by source (ADR-0003)",
                 )
             return
+        if not _signature_is_trustworthy(node):
+            return  # a decorator may have rewritten the signature: say nothing about it
         for exc in _raised_exceptions(node):
             emit.fact(key, f"raises.{exc}", "true", start, end, "direct `raise` in body")
         self._signature_claims(emit, key, node, definition.in_class)

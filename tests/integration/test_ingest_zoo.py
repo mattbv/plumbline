@@ -24,11 +24,18 @@ from plumbline.application.use_cases.ingest import IngestOneCommit
 from tests.zoo.builder import timeline
 from tests.zoo.importing import ZooHistory, claims_at
 from tests.zoo.scenarios import ALL
+from tests.zoo.standins import LabeledClaimImporter
 
 pytestmark = pytest.mark.integration
 
 HISTORY = ZooHistory(ALL)
 TIMES = timeline(ALL)
+_DOC_IMPORTERS = (
+    DocstringClaimImporter("zoo", "zoo"),
+    LabeledClaimImporter("plumb-readme", HISTORY),
+    LabeledClaimImporter("plumb-docs", HISTORY),
+    LabeledClaimImporter("plumb-changelog", HISTORY),
+)
 
 
 def _new_kb(path: Path) -> OntolithKnowledgeBase:
@@ -44,7 +51,7 @@ def _ingest(kb: OntolithKnowledgeBase, steps: int | None = None) -> None:
     use_case = IngestOneCommit(
         repo=HISTORY,
         code_importer=PythonCodeImporter("zoo", "zoo"),
-        doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
+        doc_importers=_DOC_IMPORTERS,
         kb=kb,
         repo_slug="o/r",
     )
@@ -174,7 +181,7 @@ class TestIdempotenceAndDeterminism:
         use_case = IngestOneCommit(
             repo=HISTORY,
             code_importer=PythonCodeImporter("zoo", "zoo"),
-            doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
+            doc_importers=_DOC_IMPORTERS,
             kb=kb,
             repo_slug="o/r",
         )
@@ -192,7 +199,7 @@ class TestIdempotenceAndDeterminism:
         use_case = IngestOneCommit(
             repo=HISTORY,
             code_importer=PythonCodeImporter("zoo", "zoo"),
-            doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
+            doc_importers=_DOC_IMPORTERS,
             kb=kb,
             repo_slug="o/r",
         )
@@ -223,7 +230,7 @@ class TestLiveMode:
         use_case = IngestOneCommit(
             repo=history,
             code_importer=PythonCodeImporter("zoo", "zoo"),
-            doc_importers=(DocstringClaimImporter("zoo", "zoo"),),
+            doc_importers=_DOC_IMPORTERS,
             kb=kb,
             repo_slug="o/r",
         )

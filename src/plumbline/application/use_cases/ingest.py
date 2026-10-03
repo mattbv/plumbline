@@ -1,9 +1,11 @@
 """The ingestion use case: the commit-apply protocol (PRD §7.7).
 
-Each commit is applied in a fixed order so transient intermediate states
-never create false contradictions: L1 code facts first, then retract
-stale L2 projections and claims, then assert the new ones. See ADR-0001
-for why L1 and L2 need this ordering at all.
+Each commit is applied in a fixed order so transient intermediate states never create
+false contradictions: L1 code facts first, then four ordered passes on L2 -- retract
+stale projections, retract stale doc claims, assert new projections, assert new doc
+claims. The order is the contract: applied any other way, a commit that fixes the code
+and the docs together opens a *false* contradiction mid-commit that the importers are
+then forbidden to clear (ADR-0007). See ADR-0001 for why L1 and L2 are separate.
 
 L1 handling follows ADR-0004 (claims are assembled into coarse ``Symbol``
 fields and only changes are written) and ADR-0005 (a key has one owner, and
@@ -25,6 +27,12 @@ from plumbline.application.ports import (
     RawClaim,
     RepoReader,
     RetractOutcome,
+)
+from plumbline.application.projection import (
+    PROJECTOR_PRINCIPAL,
+    DocChanges,
+    ProjectionPlan,
+    Projector,
 )
 from plumbline.application.symbol_facts import (
     KeyConflict,
@@ -65,7 +73,13 @@ class IngestReport:
         conflicts: Symbol keys claimed by more than one path, and who lost.
         claims_asserted: Doc claims newly stated and written.
         claims_retracted: Doc claims no longer stated and withdrawn.
-        deferred: Doc changes held back because the old claim is disputed.
+        deferred: Changes (doc claims or projections) held back because the old claim
+            is disputed.
+        projected: Projections newly asserted.
+        projections_withdrawn: Projections withdrawn because the code changed or the last
+            doc claim left the slot.
+        abstained: Documented slots in the affected set whose code value could not be
+            proven (the PRD's abstention-rate numerator).
     """
 
     written: int = 0
@@ -75,6 +89,9 @@ class IngestReport:
     claims_asserted: int = 0
     claims_retracted: int = 0
     deferred: tuple[DeferredClaim, ...] = ()
+    projected: int = 0
+    projections_withdrawn: int = 0
+    abstained: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,12 +127,31 @@ class IngestOneCommit:
         """Apply `commit` to the KB (PRD §7.7, steps 1-5; step 6 is `ReconcileDrift`)."""
         files, deleted = self._read_changed_files(commit)
         claims = self.code_importer.extract(files, commit)
-        report = self._apply_code_facts(commit, files, deleted, claims)
 
-        # 2-5. The projection's retract+assert is the drift projector's job (a
-        # Reasoner, PRD §7.8). This use case owns the doc side: claims no longer
-        # stated are retracted before new ones are asserted (§7.7 steps 3 and 5).
-        asserted, retracted, deferred = self._apply_doc_claims(commit, files, deleted)
+        # 1. L1: code facts (supersession).
+        report, changed = self._apply_code_facts(commit, files, deleted, claims)
+
+        # Plan the L2 passes without writing anything yet.
+        plans = [
+            plan
+            for importer in self.doc_importers
+            if (plan := self._plan(importer, files, deleted, commit))
+        ]
+        changes = _doc_changes(plans)
+        affected = changes.touched_facts | self._facts_affected_by(changed)
+        owner, _, repo = self.repo_slug.partition("/")
+        projection = Projector(self.kb, owner, repo).plan(commit, affected, changes)
+
+        # 2-5. The four passes, in this order and no other (ADR-0007). A projection must
+        # never be asserted while a doc claim it disagrees with is about to be withdrawn,
+        # nor the reverse: the importer that would clear the false contradiction is a
+        # party to it, and Ontolith refuses its retraction.
+        withdrawn, held_projections = self._retract_projections(projection, commit)
+        retracted, held_docs = self._retract_docs(plans, commit)
+        projected = self._assert_projections(projection, held_projections, commit)
+        asserted = self._assert_docs(plans, held_docs, commit)
+
+        deferred = [DeferredClaim(a, p, f) for a, p, f in sorted(held_projections | held_docs)]
         return IngestReport(
             written=report.written,
             removed=report.removed,
@@ -124,19 +160,63 @@ class IngestOneCommit:
             claims_asserted=asserted,
             claims_retracted=retracted,
             deferred=tuple(deferred),
+            projected=projected,
+            projections_withdrawn=withdrawn,
+            abstained=projection.abstained,
         )
 
-    def _apply_doc_claims(
-        self, commit: CommitRef, files: dict[str, bytes], deleted: frozenset[str]
-    ) -> tuple[int, int, list[DeferredClaim]]:
-        """The set-difference protocol per ``(fact, author, path)`` (ADR-0006 §2-3)."""
-        plans = [
-            plan
-            for importer in self.doc_importers
-            if (plan := self._plan(importer, files, deleted, commit))
-        ]
+    def _facts_affected_by(self, changed: frozenset[str]) -> set[str]:
+        """Facts whose projection may move because L1 changed under them.
 
-        # Pass 1: retract everything no longer stated, before anything is asserted.
+        A change to a namespace (a module's or class's closure, or its removal) can
+        change whether every name beneath it is provably absent, so those facts are
+        re-evaluated too -- even though the children themselves did not change.
+        """
+        facts: set[str] = set()
+        for symbol_key in sorted(changed):
+            facts.update(self.kb.facts_about(symbol_key))
+            kind = (self.kb.symbol_fields(symbol_key) or {}).get("kind")
+            if kind in ("module", "class"):
+                facts.update(self.kb.facts_under(symbol_key))
+        return facts
+
+    def _retract_projections(
+        self, projection: ProjectionPlan, commit: CommitRef
+    ) -> tuple[int, set[tuple[str, str, str]]]:
+        """Pass 2: withdraw projections that changed, became unprovable, or lost their slot."""
+        withdrawn = 0
+        held: set[tuple[str, str, str]] = set()
+        for step in projection.steps:
+            for stale in step.retract:
+                outcome = self.kb.retract_claim(
+                    stale.claim_id, author_principal=PROJECTOR_PRINCIPAL, as_of=commit.committed_at
+                )
+                if outcome is RetractOutcome.RETRACTED:
+                    withdrawn += 1
+                else:
+                    held.add((PROJECTOR_PRINCIPAL, stale.path, step.fact_key))
+        return withdrawn, held
+
+    def _assert_projections(
+        self, projection: ProjectionPlan, held: set[tuple[str, str, str]], commit: CommitRef
+    ) -> int:
+        """Pass 4: state the code's current value -- except as a replacement for a stuck one."""
+        stuck_facts = {fact for _, _, fact in held}
+        projected = 0
+        for step in projection.steps:
+            if step.fact_key in stuck_facts:
+                continue  # the old projection is in a dispute; do not pile a new one on
+            for claim in step.assert_:
+                self.kb.record_claim(
+                    claim, author_principal=PROJECTOR_PRINCIPAL, as_of=commit.committed_at
+                )
+                projected += 1
+        return projected
+
+    def _retract_docs(
+        self, plans: list[_DocPlan], commit: CommitRef
+    ) -> tuple[int, set[tuple[str, str, str]]]:
+        """Pass 3: withdraw every doc claim no longer stated (ADR-0006 §2-3)."""
         retracted = 0
         held: set[tuple[str, str, str]] = set()
         for plan in plans:
@@ -155,9 +235,12 @@ class IngestOneCommit:
                         retracted += 1
                     else:
                         held.add((plan.importer.principal, path, existing.fact_key))
+        return retracted, held
 
-        # Pass 2: assert what is newly stated -- but never a replacement for a
-        # claim that is stuck in a dispute.
+    def _assert_docs(
+        self, plans: list[_DocPlan], held: set[tuple[str, str, str]], commit: CommitRef
+    ) -> int:
+        """Pass 5: write newly stated doc claims -- but never a replacement for a stuck one."""
         asserted = 0
         for plan in plans:
             author = plan.importer.principal
@@ -167,8 +250,7 @@ class IngestOneCommit:
                         continue
                     self.kb.record_claim(claim, author_principal=author, as_of=commit.committed_at)
                     asserted += 1
-
-        return asserted, retracted, [DeferredClaim(a, p, f) for a, p, f in sorted(held)]
+        return asserted
 
     def _plan(
         self,
@@ -196,8 +278,12 @@ class IngestOneCommit:
         files: dict[str, bytes],
         deleted: frozenset[str],
         claims: list[RawClaim],
-    ) -> IngestReport:
-        """Write changed L1 fields, infer removals, and report what was left alone."""
+    ) -> tuple[IngestReport, frozenset[str]]:
+        """Write changed L1 fields, infer removals, and report what was left alone.
+
+        Also returns the symbols whose stored state actually changed, so the projector
+        knows which slots to re-evaluate.
+        """
         snapshot = assemble(claims)
         emitters = emitting_paths(claims)
         analyzed = frozenset(
@@ -207,6 +293,7 @@ class IngestOneCommit:
         )
 
         written = 0
+        changed: set[str] = set()
         conflicts = list(find_conflicts(claims))
         for symbol_key, fields in snapshot.items():
             current = self.kb.symbol_fields(symbol_key) or {}
@@ -225,17 +312,19 @@ class IngestOneCommit:
                         source=fields.anchor,
                     )
                     written += 1
+                    changed.add(symbol_key)
 
         removed = self._remove_vanished(commit, snapshot, deleted | analyzed)
         unanalyzed = tuple(
             path for path in sorted(set(files) - analyzed) if self.kb.symbols_defined_in(path)
         )
-        return IngestReport(
+        report = IngestReport(
             written=written + len(removed),
             removed=tuple(removed),
             unanalyzed=unanalyzed,
             conflicts=tuple(conflicts),
         )
+        return report, frozenset(changed | set(removed))
 
     def _remove_vanished(
         self, commit: CommitRef, snapshot: dict[str, SymbolFields], paths: frozenset[str]
@@ -271,6 +360,23 @@ class IngestOneCommit:
             except FileNotFoundError:
                 deleted.add(path)  # nothing to read, but whatever it defined is gone
         return files, frozenset(deleted)
+
+
+def _doc_changes(plans: list[_DocPlan]) -> DocChanges:
+    """Which claims this commit is about to withdraw, and how many it will newly write."""
+    retracting: set[str] = set()
+    asserting: dict[str, int] = defaultdict(int)
+    for plan in plans:
+        for path in plan.paths:
+            wanted = plan.wanted.get(path, {})
+            for existing in plan.existing.get(path, []):
+                if (existing.fact_key, existing.value) not in wanted:
+                    retracting.add(existing.claim_id)
+                    asserting.setdefault(existing.fact_key, 0)  # the slot is touched
+            for fact_key, value in wanted:
+                if (fact_key, value) not in plan.present[path]:
+                    asserting[fact_key] += 1
+    return DocChanges(frozenset(retracting), dict(asserting))
 
 
 def _may_write(

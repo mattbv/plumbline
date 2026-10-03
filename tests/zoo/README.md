@@ -72,6 +72,16 @@ principals the pipeline has importers for are compared. The L2 `Expectation` lab
 checked the same way for the docstring principal, so every labeled docstring claim in the
 older scenarios is now verified against the real KB too.
 
+## Routing outcomes, end to end
+
+`tests/integration/test_zoo_outcomes.py` ingests the whole zoo commit by commit through the real
+code importer, the real docstring importer, the drift projector, and Ontolith's conflict
+routing, and reads each L2 label's outcome off the KB (ADR-0007 §7): *corroborate* is a claim
+and a projection with no open dispute; *contradict* is an open dispute (its drift class from
+the members' authors, its origin from `created_at`); *abstain* is claims with no projection;
+*undocumented* is no claims at all. `standins.py` supplies the README, docs and CHANGELOG claims
+the labels state, because those importers do not exist yet; it does not parse Markdown.
+
 ## Adding a scenario
 
 1. Pick the PRD section or requirement it exercises and put it in `prd_refs`.

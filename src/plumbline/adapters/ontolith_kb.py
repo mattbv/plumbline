@@ -20,7 +20,8 @@ from ontolith.core.ids import IdProvider
 
 from plumbline.adapters.ontolith_schema import SCHEMA_NAMESPACE, build_schema
 from plumbline.adapters.replay_clock import ReplayClock
-from plumbline.application.ports import ActiveClaim, RawClaim, RetractOutcome
+from plumbline.application.ports import ActiveClaim, PresentClaim, RawClaim, RetractOutcome
+from plumbline.application.projection import PROJECTOR_PRINCIPAL
 from plumbline.domain import anchors
 
 CODE_PRINCIPAL = "plumb-code"
@@ -112,7 +113,7 @@ class OntolithKnowledgeBase:
             default_capability="write",
             author=admin_principal_id,
         )
-        for principal in DOC_PRINCIPALS:
+        for principal in (*DOC_PRINCIPALS, PROJECTOR_PRINCIPAL):
             kb.create_principal(
                 principal,
                 kind="service",
@@ -291,6 +292,50 @@ class OntolithKnowledgeBase:
             if fact is not None and fact.natural_key is not None:
                 found[path].append(ActiveClaim(a.id, fact.natural_key, str(a.value), path))
         return found
+
+    def facts_about(self, symbol_key: str) -> list[str]:
+        """Keys of the facts whose ``about`` is this symbol, sorted."""
+        symbol = self._kb.backend.get_entity_by_natural_key(SCHEMA_NAMESPACE, "Symbol", symbol_key)
+        if symbol is None:
+            return []
+        return sorted(
+            fact.natural_key
+            for fact in self._kb.query("Fact").where(about=symbol.id).all()
+            if fact.natural_key is not None
+        )
+
+    def facts_under(self, symbol_key: str) -> list[str]:
+        """Keys of the facts about this symbol's descendants (``py:a.b`` covers ``py:a.b.f``).
+
+        Scans every `Fact`, because the key prefix is not indexed. It is called only when
+        a *namespace* symbol changed, which is rare.
+        """
+        prefix = f"{symbol_key}."
+        return sorted(
+            fact.natural_key
+            for fact in self._kb.query("Fact").all()
+            if fact.natural_key is not None and fact.natural_key.startswith(prefix)
+        )
+
+    def claims_on(self, fact_key: str) -> list[PresentClaim]:
+        """Every present claim on a fact (active, or flagged in an open dispute)."""
+        fact = self._kb.backend.get_entity_by_natural_key(SCHEMA_NAMESPACE, "Fact", fact_key)
+        if fact is None:
+            return []
+        found: list[PresentClaim] = []
+        for a in self._kb.assertions(subject=fact.id, predicate="Fact.value", status=None):
+            if (
+                a.valid_to is not None
+                or a.source is None
+                or str(getattr(a.status, "value", a.status)) not in _PRESENT_CLAIM_STATES
+            ):
+                continue
+            try:
+                path = anchors.parse(a.source).path
+            except ValueError:
+                continue
+            found.append(PresentClaim(a.id, a.author, str(a.value), path))
+        return sorted(found, key=lambda c: (c.author, c.path, c.value))
 
     def retract_claim(
         self, claim_id: str, *, author_principal: str, as_of: datetime

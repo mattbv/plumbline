@@ -61,6 +61,30 @@ def _present(kb: OntolithKnowledgeBase) -> set[str]:
     }
 
 
+def _dispute_authors(kb: OntolithKnowledgeBase) -> list[str]:
+    """Authors of the members of every open contradiction, sorted."""
+    ontology = kb._kb
+    members = [
+        ontology.get_assertion(i) if hasattr(ontology, "get_assertion") else None
+        for c in ontology.contradictions()
+        if str(getattr(c.state, "value", c.state)) == "open"
+        for i in c.member_ids
+    ]
+    if any(m is None for m in members):  # fall back to scanning
+        wanted = {
+            i
+            for c in ontology.contradictions()
+            if str(getattr(c.state, "value", c.state)) == "open"
+            for i in c.member_ids
+        }
+        return sorted(
+            a.author
+            for a in ontology.assertions(predicate="Fact.value", status=None)
+            if a.id in wanted
+        )
+    return sorted(m.author for m in members if m is not None)
+
+
 def _open_disputes(kb: OntolithKnowledgeBase) -> int:
     return len(
         [c for c in kb._kb.contradictions() if str(getattr(c.state, "value", c.state)) == "open"]
@@ -86,7 +110,8 @@ def test_an_edit_during_a_dispute_is_deferred_then_catches_up_after_resolution(
     use_case.run(c1)
     assert _present(kb) == {"30"} and _open_disputes(kb) == 0
 
-    # Another documentation source disagrees: the 30 is now a member of an open dispute.
+    # Another documentation source disagrees: the docstring's 30 (and the projection of the
+    # code's 30) are now members of an open dispute with the docs page's 45.
     kb.record_claim(
         RawClaim(
             f"py:{ID}.client.connect",
@@ -100,6 +125,7 @@ def test_an_edit_during_a_dispute_is_deferred_then_catches_up_after_resolution(
         as_of=c1.committed_at,
     )
     assert _open_disputes(kb) == 1
+    assert _dispute_authors(kb) == sorted([PRINCIPAL, "plumb-docs", "plumb-projector"])
 
     # The docstring is edited to 60 while the dispute is open.
     report = use_case.run(c2)
@@ -133,4 +159,11 @@ def test_an_edit_during_a_dispute_is_deferred_then_catches_up_after_resolution(
     assert report.deferred == ()
     assert (report.claims_asserted, report.claims_retracted) == (1, 1)
     assert _present(kb) == {"60"}
-    assert _open_disputes(kb) == 0
+
+    # The resolution retracted every member but the winner, including the projection of
+    # the code's 30; the catch-up re-states it. The docstring now says 60 against code
+    # that still says 30: that is genuine drift, and it opens a *new* dispute between
+    # exactly those two -- not a self-contradiction, and not the old dispute reviving.
+    assert report.projected == 1
+    assert _open_disputes(kb) == 1
+    assert _dispute_authors(kb) == sorted([PRINCIPAL, "plumb-projector"])

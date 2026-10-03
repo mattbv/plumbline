@@ -11,6 +11,7 @@ from plumbline.application.ports import (
     ActiveClaim,
     CommitRef,
     DocExtraction,
+    PresentClaim,
     RawClaim,
     RetractOutcome,
 )
@@ -81,6 +82,7 @@ class FakeKnowledgeBase:
         self.writes: list[tuple[str, str, str, datetime, str]] = []
         self.claims: list[RawClaim] = []  # every claim ever recorded, in order
         self.events: list[tuple[str, str]] = []  # ("assert"|"retract", fact_key), in order
+        self.authored: list[tuple[str, str]] = []  # ("assert"|"retract", author), in order
         self.stored: dict[str, tuple[str, str, str, str]] = {}  # id -> author, fact, value, path
         self.disputed_facts: set[str] = set()
         self._next = 0
@@ -108,6 +110,7 @@ class FakeKnowledgeBase:
         self.stored[f"c{self._next}"] = (author_principal, claim.fact_key, claim.raw_value, path)
         self.claims.append(claim)
         self.events.append(("assert", claim.fact_key))
+        self.authored.append(("assert", author_principal))
 
     def active_claims(
         self, author_principal: str, paths: Collection[str]
@@ -118,6 +121,23 @@ class FakeKnowledgeBase:
                 found[path].append(ActiveClaim(claim_id, fact, value, path))
         return found
 
+    def facts_about(self, symbol_key: str) -> list[str]:
+        return sorted(
+            {fact for _, fact, _, _ in self.stored.values() if fact.partition("#")[0] == symbol_key}
+        )
+
+    def facts_under(self, symbol_key: str) -> list[str]:
+        return sorted(
+            {fact for _, fact, _, _ in self.stored.values() if fact.startswith(f"{symbol_key}.")}
+        )
+
+    def claims_on(self, fact_key: str) -> list[PresentClaim]:
+        return [
+            PresentClaim(claim_id, author, value, path)
+            for claim_id, (author, fact, value, path) in self.stored.items()
+            if fact == fact_key
+        ]
+
     def retract_claim(
         self, claim_id: str, *, author_principal: str, as_of: datetime
     ) -> RetractOutcome:
@@ -126,6 +146,7 @@ class FakeKnowledgeBase:
             return RetractOutcome.DISPUTED
         del self.stored[claim_id]
         self.events.append(("retract", fact))
+        self.authored.append(("retract", author_principal))
         return RetractOutcome.RETRACTED
 
 
