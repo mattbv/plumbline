@@ -150,20 +150,28 @@ class TestEditHistory:
             c2,
         )  # type: ignore[attr-defined]
         assert (str(new.status), new.value, new.valid_from, new.valid_to) == (
-            "active",
+            "flagged",  # in a dispute with the projection of the code's 30: that is the drift
             "60",
             c2,
             None,
         )  # type: ignore[attr-defined]
 
-    def test_an_edit_never_makes_the_importer_contradict_itself(self, replayed: Replayed) -> None:
+    def test_an_edit_never_makes_an_author_contradict_itself(self, replayed: Replayed) -> None:
+        """Retract-then-assert: the only dispute is docs against code, never docs against docs."""
         ontology = replayed.kb._kb
-        open_disputes = [
-            c
+        entity = ontology.backend.get_entity_by_natural_key("default", "Fact", self.FACT)
+        members = [
+            c.member_ids
             for c in ontology.contradictions()
-            if str(getattr(c.state, "value", c.state)) == "open"
+            if c.subject == entity.id and str(getattr(c.state, "value", c.state)) == "open"
         ]
-        assert open_disputes == []
+        assert len(members) == 1
+        authors = sorted(
+            a.author
+            for a in ontology.assertions(subject=entity.id, predicate="Fact.value", status=None)
+            if a.id in members[0]
+        )
+        assert authors == [PRINCIPAL, "plumb-projector"]  # one claim each
 
     def test_provenance_points_at_the_documented_symbol_at_that_commit(
         self, replayed: Replayed
