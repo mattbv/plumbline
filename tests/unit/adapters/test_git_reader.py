@@ -41,7 +41,7 @@ def commit(repo: Path, message: str, files: dict[str, str | None], when: str | N
             target.unlink()
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding="utf-8")
+            target.write_bytes(text.encode("utf-8"))  # bytes: text mode would add \r on Windows
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "--allow-empty", "-m", message, when=when)
     return git(repo, "rev-parse", "HEAD")
