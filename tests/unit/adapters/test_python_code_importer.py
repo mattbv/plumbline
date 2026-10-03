@@ -597,3 +597,56 @@ class TestDecoratedCallables:
 
     def test_undecorated_functions_are_unaffected(self) -> None:
         assert "param.a.default" in self._signature_facts("def f(a=1): ...\n")
+
+
+class TestSameFileWrapperDecorators:
+    """Found on a real repository: 44 methods under a `@wraps` lock lost their signatures."""
+
+    WRAPPER = (
+        "import functools\n"
+        "def synchronized(method):\n"
+        "    @functools.wraps(method)\n"
+        "    def wrapper(self, *a, **kw):\n"
+        "        return method(self, *a, **kw)\n"
+        "    return wrapper\n\n"
+    )
+
+    def _has_signature(self, source: str) -> bool:
+        return ("py:pkg.mod.C.m", "param.a.default") in extract(source)
+
+    def test_a_decorator_built_with_wraps_in_this_file_preserves_the_signature(self) -> None:
+        assert self._has_signature(
+            self.WRAPPER + "class C:\n    @synchronized\n    def m(self, a=1): ...\n"
+        )
+
+    def test_so_does_a_decorator_factory(self) -> None:
+        source = (
+            "from functools import wraps\n"
+            "def retry(times):\n"
+            "    def decorate(f):\n"
+            "        @wraps(f)\n"
+            "        def wrapper(*a, **kw):\n"
+            "            return f(*a, **kw)\n"
+            "        return wrapper\n"
+            "    return decorate\n\n"
+            "class C:\n    @retry(3)\n    def m(self, a=1): ...\n"
+        )
+        assert self._has_signature(source)
+
+    def test_an_imported_decorator_is_still_opaque(self) -> None:
+        source = (
+            "from vendor import synchronized\n"
+            "class C:\n    @synchronized\n    def m(self, a=1): ...\n"
+        )
+        assert not self._has_signature(source)
+
+    def test_a_decorator_that_does_not_use_wraps_is_still_opaque(self) -> None:
+        source = (
+            "def sneaky(f):\n    def wrapper(): ...\n    return wrapper\n\n"
+            "class C:\n    @sneaky\n    def m(self, a=1): ...\n"
+        )
+        assert not self._has_signature(source)
+
+    def test_the_recognition_is_by_name_within_the_file(self) -> None:
+        source = self.WRAPPER + "class C:\n    @other\n    def m(self, a=1): ...\n"
+        assert not self._has_signature(source)

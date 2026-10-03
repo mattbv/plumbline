@@ -8,6 +8,8 @@ projector must *abstain*, the importer must emit nothing for the slot.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tests.zoo.importing import claims_at
@@ -34,6 +36,22 @@ def _derived_absence(exp: Expectation, value: str | None) -> bool:
 
 def _project(scenario: Scenario, label: str) -> dict[tuple[str, str], str]:
     return {(c.symbol_key, c.aspect): c.raw_value for c in claims_at(scenario, label)}
+
+
+def _stated_or_derived(projected: dict[tuple[str, str], str], exp: Expectation) -> str | None:
+    """The importer's own claim, or what follows from its ``param_names`` for a starred name.
+
+    `param.concepts.exists` is not a claim the importer makes (starred parameters appear only
+    in ``param_names``); the projector derives it, so the label is checked the same way.
+    """
+    stated = projected.get((exp.symbol, exp.aspect))
+    if stated is not None or not (
+        exp.aspect.startswith("param.") and exp.aspect.endswith(".exists")
+    ):
+        return stated
+    names = json.loads(projected.get((exp.symbol, "param_names"), "[]"))
+    bare = exp.aspect.removeprefix("param.").removesuffix(".exists")
+    return "true" if bare in {n.lstrip("*") for n in names if n.startswith("*")} else None
 
 
 def _cases() -> list[tuple[Scenario, Expectation]]:
@@ -63,7 +81,7 @@ def test_importer_matches_the_zoo_labels(scenario: Scenario, exp: Expectation) -
     if exp.outcome is Outcome.UNDOCUMENTED:
         return  # 'nothing to compare' is decided downstream of extraction
     if exp.code_value is not None and not _derived_absence(exp, exp.code_value):
-        assert projected.get(slot) == exp.code_value
+        assert _stated_or_derived(projected, exp) == exp.code_value
 
     if exp.previous_code_value is not None and not _derived_absence(exp, exp.previous_code_value):
         earlier = scenario.commits[scenario.commit_index(exp.commit) - 1].label
