@@ -126,6 +126,16 @@ class ActiveClaim:
     path: str
 
 
+@dataclass(frozen=True, slots=True)
+class PresentClaim:
+    """Any present claim on a fact, from any author (a doc importer or the projector)."""
+
+    claim_id: str
+    author: str
+    value: str
+    path: str
+
+
 class RetractOutcome(StrEnum):
     """Result of asking the KB to withdraw a claim (ADR-0006 §3)."""
 
@@ -185,6 +195,22 @@ class KnowledgeBase(Protocol):
 
         One call covers a whole commit's paths so the KB is scanned once.
         """
+        ...
+
+    def facts_about(self, symbol_key: str) -> list[str]:
+        """Keys of the facts whose ``about`` is this symbol (sorted)."""
+        ...
+
+    def facts_under(self, symbol_key: str) -> list[str]:
+        """Keys of the facts about this symbol's *descendants* (``py:a.b`` covers ``py:a.b.f``).
+
+        Needed when a namespace changes: whether its children are provably absent
+        depends on it. Not indexed, so callers use it only for namespace symbols.
+        """
+        ...
+
+    def claims_on(self, fact_key: str) -> list[PresentClaim]:
+        """Every present claim on a fact, whoever authored it."""
         ...
 
     def retract_claim(
