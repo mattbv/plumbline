@@ -116,6 +116,18 @@ class GitRepoReader:
             refs.append(CommitRef(sha, when, tuple(p for p in paths if self._relevant(p))))
         return refs
 
+    def describe(self, sha: str) -> CommitRef:
+        """One commit as the pipeline sees it: its time, and what it changed against its parent.
+
+        Unlike `first_parent_history` it applies no monotonic clamp (that needs the commit
+        before it), so it is for a commit already known to follow the last one ingested.
+        """
+        line = self._git("log", "-1", "--format=%H%x09%P%x09%ct", sha).decode().strip()
+        full, parents, stamp = line.split("\t")
+        paths = self._changes(full, parents.split()[0] if parents else None)
+        when = datetime.fromtimestamp(int(stamp), tz=UTC)
+        return CommitRef(full, when, tuple(p for p in paths if self._relevant(p)))
+
     def read_file_at(self, path: str, commit_sha: str) -> bytes:
         """The file's bytes after ``commit_sha``.
 

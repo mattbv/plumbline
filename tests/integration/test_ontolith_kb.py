@@ -291,6 +291,16 @@ class TestFactReads:
         assert kb.facts_about("py:m.f") == ["py:m.f#param.x.default", "py:m.f#param.x.exists"]
         assert kb.facts_about("py:nobody") == []
 
+    def test_fact_keys_lists_every_fact_sorted(self, tmp_path: Path) -> None:
+        kb = self._kb_with_claims(tmp_path)
+        assert kb.fact_keys() == [
+            "py:m.f#param.x.default", "py:m.f#param.x.exists",
+            "py:m.f.inner#exists", "py:other.g#exists",
+        ]  # fmt: skip
+
+    def test_a_fresh_kb_has_no_fact_keys(self, tmp_path: Path) -> None:
+        assert _kb(tmp_path / "kb.db").fact_keys() == []
+
     def test_facts_under_a_namespace_are_its_descendants_only(self, tmp_path: Path) -> None:
         kb = self._kb_with_claims(tmp_path)
         assert kb.facts_under("py:m") == [

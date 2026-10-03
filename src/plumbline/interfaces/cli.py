@@ -21,14 +21,13 @@ from typing import Annotated
 import typer
 
 from plumbline import __version__
-from plumbline.adapters.docstring_claim_importer import DocstringClaimImporter
-from plumbline.adapters.git_reader import DEFAULT_EXCLUDE, GitError, GitRepoReader, repo_slug
+from plumbline.adapters.git_reader import GitError
 from plumbline.adapters.ontolith_kb import OntolithKnowledgeBase
-from plumbline.adapters.python_code_importer import PythonCodeImporter
 from plumbline.application.drift import DriftItem
 from plumbline.application.ports import CommitRef
-from plumbline.application.use_cases.backfill import BackfillHistory, HistoryRewritten, IngestTotals
-from plumbline.application.use_cases.ingest import IngestOneCommit, IngestReport
+from plumbline.application.use_cases.backfill import HistoryRewritten, IngestTotals
+from plumbline.application.use_cases.ingest import IngestReport
+from plumbline.interfaces.pipeline import open_pipeline
 
 app = typer.Typer(
     name="plumb",
@@ -187,33 +186,18 @@ def ingest(
         )
         raise typer.Exit(code=1)
 
-    if not kb_path.exists():
-        kb_path.parent.mkdir(parents=True, exist_ok=True)
-        store = OntolithKnowledgeBase.initialize(kb_path, admin_principal_id=admin, replay=True)
-    else:
-        store = OntolithKnowledgeBase.open(kb_path, replay=True)
-        if state is None and not store.is_empty():
-            store.close()
-            typer.echo(
-                "That KB already holds data from outside `plumb ingest`; "
-                "backfill goes into a fresh KB.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
+    existed = kb_path.exists()
+    pipeline = open_pipeline(repo_root, kb_path, admin=admin, branch=branch, exclude=exclude or ())
+    store, backfill = pipeline.kb, pipeline.backfill
+    if existed and state is None and not store.is_empty():
+        store.close()
+        typer.echo(
+            "That KB already holds data from outside `plumb ingest`; "
+            "backfill goes into a fresh KB.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
-    slug = repo_slug(repo_root)
-    owner, _, name = slug.partition("/")
-    reader = GitRepoReader(repo_root, branch=branch, exclude=(*DEFAULT_EXCLUDE, *(exclude or ())))
-    backfill = BackfillHistory(
-        reader,
-        IngestOneCommit(
-            repo=reader,
-            code_importer=PythonCodeImporter(owner, name),
-            doc_importers=(DocstringClaimImporter(owner, name),),
-            kb=store,
-            repo_slug=slug,
-        ),
-    )
     last = None if state is None else state["last_sha"]
     done = 0 if state is None else int(str(state["commits"]))
 

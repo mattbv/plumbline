@@ -350,6 +350,14 @@ class OntolithKnowledgeBase:
             if fact.natural_key is not None
         )
 
+    def fact_keys(self) -> list[str]:
+        """Keys of every fact in the KB, sorted (a full scan: for tools and measurements)."""
+        return sorted(
+            fact.natural_key
+            for fact in self._kb.query("Fact").all()
+            if fact.natural_key is not None
+        )
+
     def facts_under(self, symbol_key: str) -> list[str]:
         """Keys of the facts about this symbol's descendants (``py:a.b`` covers ``py:a.b.f``).
 
