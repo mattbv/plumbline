@@ -54,7 +54,7 @@ class TestGoogleStyle:
         assert facts[(F, "param.host.exists")] == "true"
         assert facts[(F, "param.host.type")] == "str"
         assert facts[(F, "param.timeout.exists")] == "true"
-        assert facts[(F, "param.timeout.type")] == "int"
+        assert facts[(F, "param.timeout.type")] == "None | int"  # the entry says `optional`
         assert facts[(F, "param.timeout.default")] == "30"
         assert facts[(F, "returns.type")] == "bool"
         assert facts[(F, "raises.KeyError")] == "true"
@@ -104,6 +104,33 @@ class TestGoogleStyle:
         source = f'def f(x):\n    """Doc.\n\n    Args:\n        x: {prose}\n    """\n'
         assert (F, "param.x.default") not in claims(source)
 
+    @pytest.mark.parametrize(
+        ("prose", "expected"),
+        [
+            # The sentence from rich that produced `', '`: "default" here is a value.
+            ('Justify: "default", "left", "right". Defaults to None.', "None"),
+            ("Mode: 'default' or 'fast'. Default is 3.", "3"),
+            ('One of "default", "left". (default: 5)', "5"),
+        ],
+    )
+    def test_a_quoted_word_default_is_not_the_keyword(self, prose: str, expected: str) -> None:
+        source = f'def f(x):\n    """Doc.\n\n    Args:\n        x: {prose}\n    """\n'
+        assert claims(source)[(F, "param.x.default")] == expected
+
+    @pytest.mark.parametrize(
+        "prose",
+        [
+            'Justify: "default", "left", "right".',
+            "Mode: 'default' or 'fast'.",
+            # Written with double backticks the real default is not read; what matters is
+            # that the quoted word is not mistaken for it.
+            'Justify: "default", "left". Defaults to ``None``.',
+        ],
+    )
+    def test_a_quoted_word_alone_states_no_default(self, prose: str) -> None:
+        source = f'def f(x):\n    """Doc.\n\n    Args:\n        x: {prose}\n    """\n'
+        assert (F, "param.x.default") not in claims(source)
+
     def test_a_default_continued_on_the_next_line_is_found(self) -> None:
         source = '''
             def f(x):
@@ -130,7 +157,45 @@ class TestGoogleStyle:
         facts = claims(source)
         assert facts[(F, "param.a.type")] == "None | int"
         assert facts[(F, "param.b.type")] == "int | str"
-        assert facts[(F, "param.c.type")] == "List[int]"
+        assert facts[(F, "param.c.type")] == "list[int]"
+
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ("x (int, optional): One.", "None | int"),
+            ("x (int): One.", "int"),
+            ("x (Optional[int], optional): One.", "None | int"),  # already says it: not doubled
+            ("x (int | None): One.", "None | int"),
+            ("x (dict[str, int], optional): One.", "None | dict[str, int]"),
+            ("x (int, OPTIONAL): One.", "None | int"),
+            ("x (int, optional, default 3): One.", "None | int"),
+        ],
+    )
+    def test_a_documented_optional_states_that_none_is_allowed(
+        self, entry: str, expected: str
+    ) -> None:
+        source = f'def f(x):\n    """Doc.\n\n    Args:\n        {entry}\n    """\n'
+        assert claims(source)[(F, "param.x.type")] == expected
+
+    def test_numpy_optional_is_read_the_same_way(self) -> None:
+        source = (
+            'def f(x, y):\n    """Doc.\n\n    Parameters\n    ----------\n'
+            "    x : int, optional\n        One.\n    y : int\n        Two.\n"
+            '    """\n'
+        )
+        facts = claims(source)
+        assert facts[(F, "param.x.type")] == "None | int"
+        assert facts[(F, "param.y.type")] == "int"
+
+    def test_sphinx_optional_is_read_the_same_way(self) -> None:
+        source = (
+            'def f(x):\n    """Doc.\n\n    :param x: One.\n    :type x: int, optional\n    """\n'
+        )
+        assert claims(source)[(F, "param.x.type")] == "None | int"
+
+    def test_optional_alone_does_not_invent_a_type(self) -> None:
+        source = 'def f(x):\n    """Doc.\n\n    Args:\n        x (optional): One.\n    """\n'
+        assert (F, "param.x.type") not in claims(source)
 
     def test_prose_where_a_type_should_be_yields_the_parameter_but_no_type(self) -> None:
         source = '''
@@ -197,7 +262,7 @@ class TestNumpyStyle:
     def test_parameters_returns_and_raises(self) -> None:
         facts = claims(self.SOURCE)
         assert facts[(F, "param.host.type")] == "str"
-        assert facts[(F, "param.timeout.type")] == "int"
+        assert facts[(F, "param.timeout.type")] == "None | int"  # the entry says `optional`
         assert facts[(F, "param.timeout.default")] == "30"
         assert facts[(F, "returns.type")] == "bool"
         assert facts[(F, "raises.KeyError")] == "true"

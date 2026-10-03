@@ -69,7 +69,8 @@ _SPHINX_FIELD = re.compile(
 )
 _DEPRECATED = re.compile(r"^\s*\.\.\s+deprecated::", re.MULTILINE)
 _DEFAULT = re.compile(
-    r"\bdefaults?\b\s*(?:to|is|=|:)?\s*"
+    # A `default` touching a quotation mark is a value ("default", "left"), not the keyword.
+    r"(?<![\"'`])\bdefaults?\b(?![\"'`])\s*(?:to|is|=|:)?\s*"
     r"(?P<v>`[^`]+`|'[^']*'|\"[^\"]*\"|[^\s,;)]+)",
     re.IGNORECASE,
 )
@@ -85,6 +86,8 @@ class _Param:
     default_text: str | None = None
     default_confidence: float = _PROSE
     rule: str = ""
+    optional: bool = False
+    """The entry says ``optional``: the argument may be omitted, and ``None`` is allowed."""
 
 
 @dataclass(slots=True)
@@ -153,23 +156,28 @@ def _entries(body: list[str]) -> list[tuple[str, str]]:
 
 def _default_in(text: str) -> str | None:
     """The default stated in prose such as ``Defaults to 30``, or ``None``."""
-    match = _DEFAULT.search(text)
-    if match is None:
-        return None
-    value = match["v"].strip("`").rstrip(".,;)")
-    return value or None
+    for match in _DEFAULT.finditer(text):
+        value = match["v"].strip("`").rstrip(".,;)")
+        if value:
+            return value
+    return None
 
 
-def _type_and_default(type_field: str | None) -> tuple[str | None, str | None]:
-    """From ``int, optional`` or ``int, default 30``: the type, and a default if stated."""
+def _type_and_default(type_field: str | None) -> tuple[str | None, str | None, bool]:
+    """From ``int, optional`` or ``int, default 30``: the type, a default if stated, optional."""
     if not type_field:
-        return None, None
+        return None, None, False
     parts = _split_top(type_field)
     default = None
+    optional = False
+    if parts and parts[0].strip().lower() == "optional":
+        return None, None, True  # `x (optional)`: says nothing about the type
     for extra in parts[1:]:
         if extra.lower().startswith("default"):
             default = _default_in(extra)
-    return (parts[0] if parts else None), default
+        elif extra.strip().lower() == "optional":
+            optional = True
+    return (parts[0] if parts else None), default, optional
 
 
 def _google(lines: list[str], facts: _DocFacts) -> None:
@@ -197,7 +205,7 @@ def _google_section(kind: str, body: list[str], facts: _DocFacts) -> None:
             match = _GOOGLE_PARAM.match(head)
             if match is None or match["name"].startswith("*"):
                 continue
-            type_text, typed_default = _type_and_default(match["type"])
+            type_text, typed_default, optional = _type_and_default(match["type"])
             prose = _default_in(f"{match['desc']} {rest}")
             facts.params.append(
                 _Param(
@@ -206,6 +214,7 @@ def _google_section(kind: str, body: list[str], facts: _DocFacts) -> None:
                     typed_default or prose,
                     _STRUCTURED if typed_default else _PROSE,
                     f"docstring.google:Args '{match['name']}'",
+                    optional,
                 )
             )
     elif kind.startswith("return") and entries:
@@ -249,7 +258,7 @@ def _numpy_params(body: list[str], facts: _DocFacts) -> None:
         match = _NUMPY_ENTRY.match(head)
         if match is None:
             continue
-        type_text, typed_default = _type_and_default(match["type"])
+        type_text, typed_default, optional = _type_and_default(match["type"])
         prose = _default_in(rest)
         for name in (n.strip() for n in match["names"].split(",")):
             if _NAME.match(name):
@@ -260,6 +269,7 @@ def _numpy_params(body: list[str], facts: _DocFacts) -> None:
                         typed_default or prose,
                         _STRUCTURED if typed_default else _PROSE,
                         f"docstring.numpy:Parameters '{name}'",
+                        optional,
                     )
                 )
 
@@ -285,13 +295,15 @@ def _sphinx(lines: list[str], facts: _DocFacts) -> None:
             if not _NAME.match(name):
                 continue
             inline_type = tokens[0] if len(tokens) == 2 else None
+            type_text, _typed_default, optional = _type_and_default(inline_type or types.get(name))
             facts.params.append(
                 _Param(
                     name,
-                    inline_type or types.get(name),
+                    type_text,
                     _default_in(text),
                     _PROSE,
                     f"docstring.sphinx:param '{name}'",
+                    optional,
                 )
             )
         elif kind == "rtype":
@@ -426,6 +438,8 @@ class DocstringClaimImporter:
             add(f"param.{param.name}.exists", "true", _STRUCTURED, param.rule)
             if param.type_text is not None:
                 type_value = src.annotation_from_text(param.type_text)
+                if type_value is not None and param.optional:
+                    type_value = canonical.canonical_type_annotation(f"{type_value} | None")
                 if type_value is not None:
                     add(f"param.{param.name}.type", type_value, _STRUCTURED, param.rule)
             if param.default_text is not None:

@@ -114,7 +114,7 @@ class TestSignatures:
         facts = extract("def f(a: int | None, b: 'Foo', c: typing.List[int]) -> str: ...")
         assert facts[("py:pkg.mod.f", "param.a.type")] == "None | int"
         assert facts[("py:pkg.mod.f", "param.b.type")] == "Foo"
-        assert facts[("py:pkg.mod.f", "param.c.type")] == "List[int]"
+        assert facts[("py:pkg.mod.f", "param.c.type")] == "list[int]"
         assert facts[("py:pkg.mod.f", "returns.type")] == "str"
 
     def test_optional_and_union_normalize_to_pep_604(self) -> None:
