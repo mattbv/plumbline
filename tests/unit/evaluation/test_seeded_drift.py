@@ -199,3 +199,48 @@ class TestRun:
         report = sd.run(repo, tmp_path / "work", per_category=1, categories=("code_default",))
         assert report.recall() == (0, 1)
         assert [o.verdict for o in report.outcomes] == ["missed"]
+
+
+def candidate(aspect: str = "param.a.exists", value: str = "true") -> sd.Candidate:
+    return sd.Candidate(f"py:p.m.f#{aspect}", "py:p.m.f", aspect, "src/p/m.py", "f", value)
+
+
+class TestWhichEditsApply:
+    DOC = '    """Doc.\n\n    Args:\n        a (int): A. Defaults to 1.\n    """\n'
+    PLAIN = f'def f(a: int = 1, b: str = "x"):\n{DOC}    return a\n'
+    KWARGS = f"def f(a: int = 1, **kwargs):\n{DOC}    return a\n"
+
+    @pytest.mark.parametrize("category", ["code_param_renamed", "docs_param_invented"])
+    def test_a_missing_parameter_is_injected_when_nothing_could_absorb_it(
+        self, category: str
+    ) -> None:
+        built = sd.build(category, candidate(), set(), 1)
+        assert built is not None and built.edit(self.PLAIN) is not None
+
+    @pytest.mark.parametrize("category", ["code_param_renamed", "docs_param_invented"])
+    def test_a_missing_parameter_is_not_injected_where_kwargs_could_absorb_it(
+        self, category: str
+    ) -> None:
+        # With **kwargs the tool cannot prove a parameter absent, so staying silent is correct;
+        # injecting here would count a by-design abstention as a miss.
+        built = sd.build(category, candidate(), set(), 1)
+        assert built is not None and built.edit(self.KWARGS) is None
+
+    def test_an_undocumented_control_skips_every_fact_the_docstring_states(self) -> None:
+        both = {"py:p.m.f#param.a.default", "py:p.m.f#param.b.default"}
+        control = sd.build("undocumented_default_changed", candidate(), both, 1)
+        assert control is not None and control.edit(self.PLAIN) is None
+
+    def test_an_undocumented_control_changes_the_one_fact_the_docstring_is_silent_on(self) -> None:
+        stated = {"py:p.m.f#param.a.default"}
+        control = sd.build("undocumented_default_changed", candidate(), stated, 1)
+        assert control is not None
+        out = control.edit(self.PLAIN)
+        assert out is not None and "a: int = 1" in out and 'b: str = "x"' not in out
+
+    def test_an_undocumented_type_control_leaves_documented_types_alone(self) -> None:
+        stated = {"py:p.m.f#param.a.type"}
+        control = sd.build("undocumented_type_changed", candidate(), stated, 1)
+        assert control is not None
+        out = control.edit(self.PLAIN)
+        assert out is not None and "a: int" in out and "b: int" in out
