@@ -13,11 +13,20 @@ to a human. Nothing is silently overwritten; nothing is auto-resolved.
 
 ## Status
 
-🚧 **Pre-Alpha.** This repository is an M0 foundations scaffold: the clean
-architecture skeleton, tooling, and the `plumb init` command are real and
-tested. Ingestion, drift detection, and reconciliation are M1 work — see the
-[Implementation Plan](docs/Implementation_Plan.md) and the
-[full product spec](docs/PRD.md).
+🚧 **Pre-Alpha.** What works today, checked end to end against a real Ontolith
+knowledge base:
+
+- `plumb ingest` replays a Git repository's history into a knowledge base, resumably
+  and read-only: static analysis of Python source (symbols, signatures, deprecation,
+  namespace closure), claims read from Python docstrings (Google, NumPy, Sphinx), and a
+  drift projector that states *the code's* value in the same slot as each documented claim.
+- `plumb drift` lists the resulting open contradictions, strongest first.
+
+What does **not** exist yet: README, docs-page and CHANGELOG importers (so today it finds
+docstring drift only), CLI/env/project facts, the review and resolution workflow, GitHub
+integration, and `plumb explain` / `as-of` / `blame` / `check`. See the
+[Implementation Plan](docs/Implementation_Plan.md), the
+[full product spec](docs/PRD.md), and the [first run on a real repository](docs/first-real-run.md).
 
 ## Why
 
@@ -42,9 +51,15 @@ uv sync --all-extras
 # Run the test suite
 uv run pytest
 
-# Initialize a knowledge base in the current directory
-uv run plumb init --admin you@example.com
+# Replay a repository's history into a knowledge base (the repository is only read)
+uv run plumb ingest --repo /path/to/your/repo --kb /tmp/plumbline.db
+
+# See what the docs and the code disagree about
+uv run plumb drift --kb /tmp/plumbline.db
 ```
+
+Or, to keep the configuration and knowledge base inside a project, run
+`uv run plumb init --admin you@example.com` there first, then `plumb ingest` and `plumb drift`.
 
 ## Architecture
 

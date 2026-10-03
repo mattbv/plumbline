@@ -72,11 +72,35 @@ _EXTRACTOR_CONFIDENCE = 1.0
 """Static analysis of the syntax tree: fidelity is certain; only *truth* is in question."""
 
 
-def _signature_is_trustworthy(func: _FunctionNode) -> bool:
+def _wrapper_decorators(tree: ast.Module) -> frozenset[str]:
+    """Names of functions in this file that are decorators built with ``functools.wraps``.
+
+    A decorator that wraps with ``@wraps(f)`` forwards the call and keeps the signature,
+    which is the near-universal convention (a locking or retry wrapper). Only decorators
+    defined in the *same file* can be recognised; an imported one is opaque.
+    """
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for inner in ast.walk(node):
+            if inner is node or not isinstance(inner, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if any(
+                (_dotted(d.func if isinstance(d, ast.Call) else d) or "").rsplit(".", 1)[-1]
+                == "wraps"
+                for d in inner.decorator_list
+            ):
+                found.add(node.name)
+    return frozenset(found)
+
+
+def _signature_is_trustworthy(func: _FunctionNode, wrappers: frozenset[str] = frozenset()) -> bool:
     """Whether the ``def``'s own signature is the callable's effective signature."""
     for decorator in func.decorator_list:
         target = decorator.func if isinstance(decorator, ast.Call) else decorator
-        if (_dotted(target) or "").rsplit(".", 1)[-1] not in _SIGNATURE_SAFE_DECORATORS:
+        name = (_dotted(target) or "").rsplit(".", 1)[-1]
+        if name not in _SIGNATURE_SAFE_DECORATORS and name not in wrappers:
             return False
     return True
 
@@ -287,6 +311,7 @@ class PythonCodeImporter:
             "module attribute names fully determined by source (ADR-0003)",
         )
 
+        wrappers = _wrapper_decorators(tree)
         counts = Counter(d.qualname for d in walker.found)
         unique = [d for d in walker.found if counts[d.qualname] == 1 and self._visible(d.qualname)]
         ambiguous = {
@@ -320,7 +345,11 @@ class PythonCodeImporter:
             else:
                 continue  # member of an ambiguous or hidden class: abstain
             self._definition_claims(
-                emit, definition, rebound=rebound, scope=scopes.get(definition.qualname)
+                emit,
+                definition,
+                rebound=rebound,
+                scope=scopes.get(definition.qualname),
+                wrappers=wrappers,
             )
         return emit.claims
 
@@ -348,6 +377,7 @@ class PythonCodeImporter:
         *,
         rebound: bool,
         scope: _ClassScope | None,
+        wrappers: frozenset[str] = frozenset(),
     ) -> None:
         """Claims for one function, method, or class.
 
@@ -382,7 +412,7 @@ class PythonCodeImporter:
                     "class member names fully determined by source (ADR-0003)",
                 )
             return
-        if not _signature_is_trustworthy(node):
+        if not _signature_is_trustworthy(node, wrappers):
             return  # a decorator may have rewritten the signature: say nothing about it
         for exc in _raised_exceptions(node):
             emit.fact(key, f"raises.{exc}", "true", start, end, "direct `raise` in body")

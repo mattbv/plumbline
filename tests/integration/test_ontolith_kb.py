@@ -323,3 +323,51 @@ class TestFactReads:
             _claim("45", path="src/m.py"), author_principal="plumb-projector", as_of=WHEN
         )
         assert {c.value for c in kb.claims_on("py:m.f#param.x.default")} == {"30", "45"}
+
+
+class TestWithdrawCodeFact:
+    def test_a_withdrawn_field_reads_as_not_stated(self, tmp_path: Path) -> None:
+        kb = _kb(tmp_path / "kb.db")
+        kb.record_code_fact("py:m.f", "kind", "function", as_of=WHEN, source=SOURCE)
+        kb.record_code_fact("py:m.f", "signature_json", '{"v":1}', as_of=WHEN, source=SOURCE)
+        kb.withdraw_code_fact("py:m.f", "signature_json", as_of=WHEN.replace(hour=2))
+        assert kb.symbol_fields("py:m.f") == {"kind": "function"}
+
+    def test_the_history_keeps_the_withdrawn_value_with_a_closed_window(
+        self, tmp_path: Path
+    ) -> None:
+        kb = OntolithKnowledgeBase.initialize(
+            tmp_path / "kb.db", admin_principal_id="a@x.invalid", replay=True
+        )
+        kb.record_code_fact("py:m.f", "signature_json", '{"v":1}', as_of=WHEN, source=SOURCE)
+        kb.withdraw_code_fact("py:m.f", "signature_json", as_of=WHEN.replace(hour=2))
+        o = kb._kb
+        e = o.backend.get_entity_by_natural_key("default", "Symbol", "py:m.f")
+        [a] = o.assertions(subject=e.id, predicate="Symbol.signature_json", status=None)
+        assert (str(a.status), a.valid_from, a.valid_to) == (
+            "retracted",
+            WHEN,
+            WHEN.replace(hour=2),
+        )
+
+    def test_a_field_can_be_stated_again_after_being_withdrawn(self, tmp_path: Path) -> None:
+        kb = _kb(tmp_path / "kb.db")
+        kb.record_code_fact("py:m.f", "signature_json", '{"v":1}', as_of=WHEN, source=SOURCE)
+        kb.withdraw_code_fact("py:m.f", "signature_json", as_of=WHEN.replace(hour=2))
+        kb.record_code_fact(
+            "py:m.f",
+            "signature_json",
+            '{"v":1,"returns":"int"}',
+            as_of=WHEN.replace(hour=3),
+            source=SOURCE,
+        )
+        assert kb.symbol_fields("py:m.f") == {"signature_json": '{"v":1,"returns":"int"}'}
+
+    def test_withdrawing_from_an_unknown_symbol_or_unset_field_is_a_no_op(
+        self, tmp_path: Path
+    ) -> None:
+        kb = _kb(tmp_path / "kb.db")
+        kb.withdraw_code_fact("py:nobody", "signature_json", as_of=WHEN)
+        kb.record_code_fact("py:m.f", "kind", "function", as_of=WHEN, source=SOURCE)
+        kb.withdraw_code_fact("py:m.f", "signature_json", as_of=WHEN)
+        assert kb.symbol_fields("py:m.f") == {"kind": "function"}

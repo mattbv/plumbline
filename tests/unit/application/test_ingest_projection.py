@@ -188,3 +188,63 @@ class TestAbstentionCount:
         report = h.commit(code=source(30), claims=[readme_claim("returns.type", "int")])
         assert (report.projected, report.abstained) == (0, 1)
         assert h.present("plumb-projector") == set()
+
+
+class TestStopsStating:
+    """A fact the importer once stated and no longer can must be withdrawn, not left standing.
+
+    Found on a real repository: a method gained a decorator the importer cannot see through,
+    its old signature stayed in the KB as if current, and the projector reported a parameter
+    that exists as missing -- seven false findings out of seven.
+    """
+
+    def decorated(self, default: int) -> bytes:
+        return f"@vendor.wrap\ndef f(host, timeout={default}):\n    return host\n".encode()
+
+    def test_the_old_signature_is_withdrawn_when_a_decorator_hides_it(self) -> None:
+        h = started()
+        report = h.commit(code=self.decorated(60))
+        assert ("py:pkg.m.f", "signature_json") in h.kb.withdrawn
+        assert "signature_json" not in (h.kb.symbols["py:pkg.m.f"])
+        assert report.fields_withdrawn == 1
+
+    def test_so_the_projection_goes_and_the_slot_is_an_honest_abstention(self) -> None:
+        h = started()
+        report = h.commit(code=self.decorated(60))
+        assert h.present("plumb-projector") == set()
+        assert h.present("plumb-readme") == {"30"}
+        assert (report.projections_withdrawn, report.abstained) == (1, 1)
+
+    def test_nothing_stale_is_projected_while_the_decorator_stays(self) -> None:
+        h = started()
+        h.commit(code=self.decorated(60))
+        h.commit(code=self.decorated(99))
+        assert h.present("plumb-projector") == set()
+
+    def test_the_signature_comes_back_when_it_can_be_stated_again(self) -> None:
+        h = started()
+        h.commit(code=self.decorated(60))
+        report = h.commit(code=source(60))
+        assert h.present("plumb-projector") == {"60"}
+        assert report.fields_withdrawn == 0
+
+    def test_a_symbol_that_becomes_ambiguous_loses_its_details_too(self) -> None:
+        h = started()
+        h.commit(
+            code=(
+                b"try:\n    def f(host, timeout=30): ...\n"
+                b"except ImportError:\n    def f(host, timeout=1): ...\n"
+            )
+        )
+        assert h.kb.symbols["py:pkg.m.f"]["kind"] == "ambiguous"
+        assert "signature_json" not in h.kb.symbols["py:pkg.m.f"]
+
+    def test_required_fields_are_never_withdrawn(self) -> None:
+        h = started()
+        h.commit(code=self.decorated(60))
+        assert {"kind", "present", "defined_at"} <= set(h.kb.symbols["py:pkg.m.f"])
+
+    def test_an_unchanged_stated_field_is_not_withdrawn(self) -> None:
+        h = started()
+        report = h.commit(code=source(30))
+        assert (h.kb.withdrawn, report.fields_withdrawn) == ([], 0)

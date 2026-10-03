@@ -20,6 +20,7 @@ from ontolith.core.ids import IdProvider
 
 from plumbline.adapters.ontolith_schema import SCHEMA_NAMESPACE, build_schema
 from plumbline.adapters.replay_clock import ReplayClock
+from plumbline.application.drift import DriftClaim, DriftItem, classify
 from plumbline.application.ports import ActiveClaim, PresentClaim, RawClaim, RetractOutcome
 from plumbline.application.projection import PROJECTOR_PRINCIPAL
 from plumbline.domain import anchors
@@ -46,6 +47,14 @@ _PRESENT_CLAIM_STATES = frozenset({"active", "flagged"})
 
 _BOOLEAN_FIELDS = frozenset({"present", "is_deprecated", "namespace_closed"})
 _AUTO_ACCEPTED = "auto_accepted"
+
+
+def _path_of(source: str | None) -> str:
+    """The path in an assertion's anchor, or empty if it has none."""
+    try:
+        return anchors.parse(source).path if source else ""
+    except ValueError:
+        return ""
 
 
 def _require_auto_accepted(proposal: object, author: str, subject: str) -> None:
@@ -133,6 +142,31 @@ class OntolithKnowledgeBase:
             Ontology.connect(path, clock=clock, id_provider=id_provider), clock, replay=replay
         )
 
+    def is_empty(self) -> bool:
+        """Whether no symbol has ever been written (a fresh KB, safe to backfill into)."""
+        return int(self._kb.query("Symbol").count()) == 0
+
+    def open_drift(self) -> list[DriftItem]:
+        """Every open contradiction as a finding, strongest first (PRD J1, step 3)."""
+        o = self._kb
+        items: list[DriftItem] = []
+        for dispute in o.contradictions():
+            if str(getattr(dispute.state, "value", dispute.state)) != "open":
+                continue
+            fact = o.get_entity(dispute.subject)
+            if fact is None or fact.natural_key is None:
+                continue
+            members = set(dispute.member_ids)
+            claims = tuple(
+                DriftClaim(
+                    a.author, str(a.value), _path_of(a.source), a.source or "", a.confidence or 0.0
+                )
+                for a in o.assertions(subject=dispute.subject, predicate="Fact.value", status=None)
+                if a.id in members
+            )
+            items.append(DriftItem(fact.natural_key, classify(claims), dispute.created_at, claims))
+        return sorted(items, key=lambda i: (-i.score, i.fact_key))
+
     def symbol_fields(self, symbol_key: str) -> dict[str, str] | None:
         """Active L1 values for a symbol keyed by `Symbol` field name, or ``None`` if unknown."""
         entity = self._kb.backend.get_entity_by_natural_key(SCHEMA_NAMESPACE, "Symbol", symbol_key)
@@ -143,6 +177,18 @@ class OntolithKnowledgeBase:
             for a in self._kb.assertions(subject=entity.id)
             if a.predicate.startswith("Symbol.") and a.valid_to is None
         }
+
+    def withdraw_code_fact(self, symbol_key: str, field: str, *, as_of: datetime) -> None:
+        """Retract the active `Symbol.<field>` assertion, so the field reads as not stated."""
+        entity = self._kb.backend.get_entity_by_natural_key(SCHEMA_NAMESPACE, "Symbol", symbol_key)
+        if entity is None:
+            return
+        if self._replay:
+            self._clock.pin(as_of)
+        for assertion in self._kb.assertions(subject=entity.id, predicate=f"Symbol.{field}"):
+            if assertion.valid_to is None:
+                proposal, _decision = self._kb.retract(assertion.id, CODE_PRINCIPAL)
+                _require_auto_accepted(proposal, CODE_PRINCIPAL, f"{symbol_key} {field}")
 
     def symbols_defined_in(self, path: str) -> list[str]:
         """Keys of present symbols whose active `defined_at` is `path`, sorted.

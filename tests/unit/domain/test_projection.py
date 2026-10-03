@@ -193,3 +193,25 @@ class TestFromFields:
         )  # fmt: skip
         assert state.signature is not None and state.signature.param_names == ("a",)
         assert state.namespace_closed is None  # not stated, so not "False"
+
+
+class TestStarredParameters:
+    """Found on a real repository: `compile_schema(ns, v, *concepts)` documents `concepts`."""
+
+    SIG = Signature(param_names=("namespace", "*concepts", "metadata"))
+
+    def test_a_parameter_documented_by_its_bare_name_exists(self) -> None:
+        assert project("param.concepts.exists", fn(self.SIG), []) == "true"
+
+    def test_so_does_a_double_starred_one(self) -> None:
+        assert (
+            project("param.options.exists", fn(Signature(param_names=("a", "**options"))), [])
+            == "true"
+        )
+
+    def test_but_a_starred_parameter_has_no_default_or_type_to_project(self) -> None:
+        assert project("param.concepts.default", fn(self.SIG), []) is None
+        assert project("param.concepts.type", fn(self.SIG), []) is None
+
+    def test_an_unrelated_name_is_still_absent_without_kwargs(self) -> None:
+        assert project("param.other.exists", fn(self.SIG), []) == "false"

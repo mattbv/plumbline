@@ -161,6 +161,16 @@ class KnowledgeBase(Protocol):
         """
         ...
 
+    def withdraw_code_fact(self, symbol_key: str, field: str, *, as_of: datetime) -> None:
+        """Stop asserting a `Symbol.<field>` the importer no longer states.
+
+        The KB must mirror what the code importer says *now*. If it once stated a
+        signature and now cannot (a decorator was added, the default became
+        non-literal), leaving the old value standing would present a stale view as
+        current. The assertion is retracted, so the field reads as "not stated".
+        """
+        ...
+
     def symbols_defined_in(self, path: str) -> list[str]:
         """Keys of the symbols whose active ``defined_at`` is ``path`` and that are present.
 

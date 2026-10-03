@@ -2,40 +2,44 @@
 
 Live status tracker. The actual roadmap (scope, exit criteria, durations)
 lives in [`docs/PRD.md`](PRD.md) §10 — this file just records where the
-project actually is against that plan, updated as milestones close.
+project actually is against that plan, updated as work lands.
 
 ## Milestones
 
-| Milestone | Scope | Exit criteria | Status |
-|---|---|---|---|
-| **M0 — Foundations** | Clean-architecture scaffold, tooling, CI, ADR-0001/0002, the drift zoo | Drift zoo ingestion is deterministic across two runs; every seeded scenario's routing outcome is asserted by tests | **Started.** Scaffold (this commit): package layout, `import-linter` contract, quality gates, `plumb init` real end to end against a real Ontolith KB. The drift zoo has its framework and a first 20 scenarios (`tests/zoo/`, ~60 more to go); the `CodeImporter` has its first part (symbols, signatures, raises, deprecation); the `DocImporter`s and the projector/lineage `Reasoner`s are not started. |
-| **M1 — Drift Radar** (0.1) | Ingestion (ING-1–2, 4–11), drift detection (DRF-1–5, 7), read-only CLI | Drift-zoo precision ≥95%/recall ≥90%; ≥90% precision on a hand-labeled sample from 3 real repos | Not started |
-| **M2 — Reconcile** (0.2) | Dispositions, waivers, GitHub App, MCP façade, backfill | Full J2→J3→merge→corroboration loop demonstrated on a real repo with a real agent; zero direct-write paths proven by a closed-set test | Not started |
-| **M3 — Publish & Harden** (1.0) | Reference site, verified-context export, wiki ingestion, security review | All P0 requirements met; budgets green; no open high-severity security findings; 5 production design partners | Not started |
+| Milestone | Exit criteria | Status |
+|---|---|---|
+| **M0 — Foundations** | Drift zoo ingestion is deterministic across two runs; every seeded scenario's routing outcome is asserted by tests | **Met, with one caveat.** Two ingestions of the zoo give byte-identical knowledge-base snapshots, and every labeled routing outcome is checked end to end against a real Ontolith KB. The caveat: README, docs and CHANGELOG claims come from label-driven stand-ins (`tests/zoo/standins.py`), because those importers do not exist yet. The zoo is still short of the PRD's ~80 scenarios. |
+| **M1 — Drift Radar** (0.1) | Drift-zoo precision ≥95% / recall ≥90%; ≥90% precision on a hand-labeled sample from 3 real repos | **In progress; neither criterion measured yet.** Done: code importer (ING-1), docstring importer (part of ING-2), the drift projector (DRF-1 to 4), `plumb ingest` and `plumb drift`, a Git reader. First real-repository run: [first-real-run.md](first-real-run.md). |
+| **M2 — Reconcile** (0.2) | Full J2 → J3 → merge → corroboration loop on a real repo with a real agent; zero direct-write paths proven by a closed-set test | Not started. Deferral under dispute and the retract-then-assert protocol (ADR-0006, ADR-0007) are the groundwork. |
+| **M3 — Publish & Harden** (1.0) | All P0 requirements met; budgets green; no open high-severity security findings; 5 production design partners | Not started |
+
+## What exists
+
+- **Code side (L1):** static analysis of Python source into `Symbol` facts — existence,
+  signatures, defaults, types, raises, deprecation, namespace closure, ownership of symbol
+  keys, and conservative removal (ADR-0003, 0004, 0005). Facts the importer stops stating are
+  withdrawn rather than left stale (ADR-0004 Amendment 2).
+- **Doc side (L2):** a claim write path with a set-difference apply protocol that defers
+  anything stuck in a dispute (ADR-0006), and a docstring importer for Google, NumPy and
+  Sphinx styles.
+- **The projector:** states the code's value into each documented slot, in four ordered
+  passes, abstaining unless it can prove the value (ADR-0007).
+- **Interfaces:** `plumb init`, `plumb ingest` (resumable, read-only, with a report of what it
+  left alone), `plumb drift`.
 
 ## Current focus
 
-**M0.** The next concrete steps, in order:
+In order:
 
-1. The drift zoo: a synthetic Git repository with ~80 seeded, labeled
-   scenarios (PRD §10 M0). Nothing in M1 can be trustworthy without it.
-   *Framework and first 20 scenarios landed; see `tests/zoo/README.md` for
-   what remains.*
-2. A real `CodeImporter` (static AST analysis, PRD ING-1). *Part 1 landed
-   (`plumbline.adapters.python_code_importer`): symbols, signatures,
-   `raises`, and deprecation, checked against the drift zoo's labels. Part 2
-   added the namespace-closure analysis (ADR-0003). The importer's output now
-   assembles into L1 `Symbol` fields (ADR-0004, `plumbline.application.symbol_facts`).
-   The write path is real (`IngestOneCommit` -> `OntolithKnowledgeBase`), the
-   zoo ingests deterministically into a real Ontolith KB, and removals are
-   inferred conservatively (ADR-0005). Still to do: `cli.*` (argparse/click/typer), `env.*`, and `project.*` facts, and
-   the snapshot-vs-KB diff that derives "no longer exists".*
-3. Widen `KnowledgeBase` (`plumbline.application.ports`) to expose what a real
-   `Ontology` connection needs. *`symbol_fields` and `record_code_fact` landed
-   (L1 writes, replay clock, out-of-order guard). `record_claim` (L2 doc claims:
-   importer principals, `Fact` entity resolution by natural key) is still a
-   deliberate `NotImplementedError` in `plumbline.adapters.ontolith_kb`. The
-   snapshot-vs-KB diff that derives `present = false` is also still to do.*
+1. **Measure recall on real code.** Inject known drift into real code (change a default,
+   rename a parameter, delete a documented function) and check that every injection is found
+   and nothing else is. Zero findings on a well-kept project says nothing about what was missed.
+2. **README, docs-page and CHANGELOG importers**, with the symbol resolver they need
+   (PRD ING-6, including an `alias_of` for re-exports). Until then only docstring drift is found.
+3. **The remaining fact producers:** `cli.*`, `env.*` and `project.*` importers, and the lineage
+   reasoner for `added_in` / `removed_in`.
+4. **Toward M2:** the re-affirm pass after a resolution, waivers (DRF-7), and the remaining
+   commands (`explain`, `as-of`, `blame`, `check`).
 
 ## Notes for whoever picks this up
 

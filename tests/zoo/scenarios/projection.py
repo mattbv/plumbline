@@ -219,6 +219,117 @@ FIXED_TOGETHER = Scenario(
     ),
 )  # fmt: skip
 
+
+_ID7 = "decorator_added_later"
+DECORATOR_ADDED_LATER = Scenario(
+    id=_ID7,
+    title="A decorator hides the signature: the old one is withdrawn, then resumes when it goes",
+    prd_refs=("ADR-0007", "ADR-0004"),
+    commits=(
+        Commit(
+            "c1",
+            "A plain function, documented",
+            {
+                **package(_ID7),
+                f"src/{_ID7}/client.py": "def connect(host, timeout=30):\n    return host\n",
+                "README.md": _readme(("timeout", "30")),
+            },
+        ),
+        Commit(
+            "c2",
+            "A vendor decorator is added and the default changes together",
+            {
+                f"src/{_ID7}/client.py": (
+                    "@vendor.retry(3)\ndef connect(host, timeout=60):\n    return host\n"
+                )
+            },
+        ),
+        Commit(
+            "c3",
+            "The decorator is removed again (default still 60)",
+            {f"src/{_ID7}/client.py": "def connect(host, timeout=60):\n    return host\n"},
+        ),
+    ),
+    expectations=(
+        _l2(_ID7, "c1", "client.connect", "param.timeout.default", Outcome.CORROBORATE,
+            code_value="30", claims=((_R, "30"),)),
+        _l2(_ID7, "c2", "client.connect", "param.timeout.default", Outcome.ABSTAIN,
+            code_value=None, claims=((_R, "30"),),
+            note="The old 30 must not linger as the code's value: it was withdrawn."),
+        _l2(_ID7, "c3", "client.connect", "param.timeout.default", Outcome.CONTRADICT,
+            code_value="60", claims=((_R, "30"),), drift_class=DriftClass.DOC_VS_CODE,
+            introduced_in="c3", note="Stated again, and now it disagrees with the README."),
+    ),
+)  # fmt: skip
+
+_ID8 = "wraps_decorator_preserves"
+WRAPS_DECORATOR_PRESERVES = Scenario(
+    id=_ID8,
+    title="A same-file decorator built with functools.wraps keeps the signature checkable",
+    prd_refs=("ADR-0007",),
+    commits=(
+        Commit(
+            "c1",
+            "A locking wrapper",
+            {
+                **package(_ID8),
+                f"src/{_ID8}/client.py": text("""
+                    import functools
+
+
+                    def synchronized(method):
+                        @functools.wraps(method)
+                        def wrapper(self, *args, **kwargs):
+                            return method(self, *args, **kwargs)
+
+                        return wrapper
+
+
+                    class Client:
+                        @synchronized
+                        def connect(self, host, timeout=30):
+                            return host
+                """),
+                "README.md": _readme(("timeout", "30")),
+            },
+        ),
+    ),
+    expectations=(
+        _l2(_ID8, "c1", "client.Client.connect", "param.timeout.default", Outcome.CORROBORATE,
+            code_value="30", claims=((_R, "30"),)),
+    ),
+)  # fmt: skip
+
+_ID9 = "varargs_documented_by_bare_name"
+VARARGS_DOCUMENTED_BY_NAME = Scenario(
+    id=_ID9,
+    title="A *args parameter documented without its star still exists",
+    prd_refs=("ADR-0007",),
+    commits=(
+        Commit(
+            "c1",
+            "A varargs function",
+            {
+                **package(_ID9),
+                f"src/{_ID9}/dsl.py": text('''
+                    def compile_schema(namespace, *concepts):
+                        """Compile.
+
+                        Args:
+                            namespace: Where.
+                            concepts: What.
+                        """
+                        return namespace, concepts
+                '''),
+            },
+        ),
+    ),
+    expectations=(
+        _l2(_ID9, "c1", "dsl.compile_schema", "param.concepts.exists", Outcome.CORROBORATE,
+            code_value="true", claims=(("plumb-docstring", "true"),)),
+    ),
+)  # fmt: skip
+
 SCENARIOS: tuple[Scenario, ...] = (
     DECORATED_FUNCTION,
     DEFAULT_NOT_A_LITERAL,
@@ -226,4 +337,7 @@ SCENARIOS: tuple[Scenario, ...] = (
     NAMESPACE_OPENS_AND_CLOSES,
     DISPUTE_OUTLIVES_ITS_PREMISE,
     FIXED_TOGETHER,
+    DECORATOR_ADDED_LATER,
+    WRAPS_DECORATOR_PRESERVES,
+    VARARGS_DOCUMENTED_BY_NAME,
 )

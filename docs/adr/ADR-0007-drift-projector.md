@@ -215,7 +215,7 @@ will reuse this ordering contract.
   opens between exactly those two authors; the old one does not revive.
 - **Verified against label-driven stand-ins for the unwritten importers.** Plumbline has a
   real code importer, a real docstring importer, and now the projector, but no README, docs
-  or CHANGELOG importers. The zoo's 50 labeled L2 outcomes are checked through the whole
+  or CHANGELOG importers. Every labeled L2 outcome in the zoo is checked through the whole
   pipeline, with `plumb-readme`, `plumb-docs` and `plumb-changelog` claims supplied by a
   test double that emits exactly what the labels say (`tests/zoo/standins.py`). That tests
   the projector, the pass order, and Ontolith's routing for real. Whether a future real
@@ -224,3 +224,19 @@ will reuse this ordering contract.
   indistinguishable in `signature_json` (ADR-0004), so a documented default can only be
   checked where the code states one. A submodule the importer never analyzed (excluded,
   or unparseable) under a closed package would be projected absent.
+
+## Amendment 2: what the first real run showed
+
+- **Same-file wrappers built with `functools.wraps` preserve the signature.** §5's short
+  allow-list was too blunt: 44 methods of Ontolith's storage backend sit behind a `@wraps`
+  locking decorator defined in the same file and lost their signatures. A decorator (or
+  decorator factory) defined in the same file that wraps with `@wraps` is now treated as
+  signature-preserving. An imported decorator is still opaque, since a single-file analysis
+  cannot see into it.
+- **A parameter declared `*name` or `**name` exists under its bare name.** A docstring that
+  documents `concepts` for `def f(a, *concepts)` is right. Such a parameter still has no
+  default or type to project.
+- **Withdrawal across time** is recorded in ADR-0004 Amendment 2: the stale signature that
+  made existing parameters look missing was the most serious defect found.
+
+See [the first run on a real repository](../first-real-run.md).

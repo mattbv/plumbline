@@ -137,7 +137,8 @@ def _parameter(name: str, facet: str, sig: Signature, names: tuple[str, ...]) ->
     """``exists``, ``default`` or ``type`` of one named parameter, or ``None`` to abstain."""
     named = signature.named_params(names)
     if facet == "exists":
-        if name in named:
+        # A parameter documented by its bare name may be declared `*name` or `**name`.
+        if name in named or name in {n.lstrip("*") for n in names if n.startswith("*")}:
             return canonical.canonical_bool(True)
         # A **kwargs parameter can accept any keyword: its absence is not provable.
         if any(n.startswith("**") for n in names):

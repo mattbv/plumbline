@@ -80,6 +80,7 @@ class FakeKnowledgeBase:
     def __init__(self, existing: dict[str, dict[str, str]] | None = None) -> None:
         self.symbols: dict[str, dict[str, str]] = dict(existing or {})
         self.writes: list[tuple[str, str, str, datetime, str]] = []
+        self.withdrawn: list[tuple[str, str]] = []
         self.claims: list[RawClaim] = []  # every claim ever recorded, in order
         self.events: list[tuple[str, str]] = []  # ("assert"|"retract", fact_key), in order
         self.authored: list[tuple[str, str]] = []  # ("assert"|"retract", author), in order
@@ -90,6 +91,10 @@ class FakeKnowledgeBase:
     def symbol_fields(self, symbol_key: str) -> dict[str, str] | None:
         fields = self.symbols.get(symbol_key)
         return None if fields is None else dict(fields)
+
+    def withdraw_code_fact(self, symbol_key: str, field: str, *, as_of: datetime) -> None:
+        self.symbols.get(symbol_key, {}).pop(field, None)
+        self.withdrawn.append((symbol_key, field))
 
     def symbols_defined_in(self, path: str) -> list[str]:
         return sorted(
