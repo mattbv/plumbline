@@ -35,7 +35,7 @@ executed injections per category; and a run that injects nothing **fails** inste
 "0 missed". That last rule exists because the first version printed `RECALL 1/1 = 100%` after
 being asked for three of each, and `0/0` on a fixture too small to inject anything.
 
-## Results
+## Results (before the fix)
 
 | Repository | Injected drift found | Controls reported | Extra findings on injections |
 |---|---|---|---|
@@ -51,7 +51,7 @@ type and renamed parameter in code; stated default, stated type, invented parame
 injections at all and the two default categories got two. The 34 are existence-style drift only.
 The harness prints this as a shortfall; it does not average it away.
 
-## The finding that matters more: precision on real code
+## The finding that mattered more: precision on real code, before the fix
 
 `rich` is a released package. **Before anything was injected, the unmodified copy had 228 open
 contradictions.** These are what a user would see on the first run. I went through them.
@@ -72,6 +72,8 @@ Of the 191 type disagreements, split by a normaliser I wrote for the purpose:
 - **64** remain different. Some are real (`Iterable[int]` documented as `List[int]`); many are an
   alias the tool cannot see through (`JustifyMethod`, a `Literal` of strings, against a documented
   `str`), where the tool cannot prove the two differ.
+
+(This section is the picture before the fix; see the next one for after.)
 
 **At least 110 of the 228 (48%) are false positives**: 21 + 86 representation and `optional` cases,
 2 that are a tool error, 1 benign. That is a lower bound; 75 findings were not read. It is **far
@@ -98,13 +100,55 @@ over-escaping, which is real but cosmetic.
   path is what each injection exercises.
 - Only docstrings are read. README, docs-page and CHANGELOG claims are not yet extracted.
 
-## What it points to
+## After the fix (ADR-0007 Amendments 3 and 4)
 
-The tool finds what is there. The work is in not reporting what is not:
+The comparison was changed as those amendments describe, and the measurement was re-run.
 
-1. Compare types modulo representation, and modulo `optional` as the docstring uses it. This
-   changes what the projector treats as a disagreement, so it needs an ADR amendment before code.
-2. Abstain where an alias the tool cannot resolve stands against a documented base type.
-3. Fix the quoted-word default parse.
-4. Measure precision again on `rich`, and on a third repository, before calling the M1 precision
-   criterion met or not.
+**The same unmodified `rich` copy went from 228 open contradictions to 51.** I read all 51:
+
+| What | Count | Reading |
+|---|---|---|
+| Documented parameter that does not exist | 12 | unchanged; all real documentation defects |
+| Default disagreements | 22 | all genuine disagreements between docs and signature; 8 are the cosmetic over-escaped newline. The three false ones (the quoted word *default* twice, and `100` against `100.0`) are the three that went |
+| Type disagreements | 17 | 12 are the docs omitting `None` (PRD §14 #10, reported by design); 3 are real narrowing (`Iterable[int]` documented as `list[int]`, a union missing `str`); **2 are false positives** |
+
+As I read them, **2 of 51 are false positives**, both a `Literal['r'] | Literal['rb']` annotation
+documented as `str`, which is a correct, looser doc. The 12 "docs omit `None`" findings are
+counted as true because that is the PRD's own definition of drift for them, and a team that
+disagrees is meant to waive them (waivers are not built yet). The labels are mine, from one
+reader and one package.
+
+**Recall on injected drift, with the same harness:**
+
+| Repository | Seeds | Injected (provable) | Found | Withheld on purpose | Controls reported |
+|---|---|---|---|---|---|
+| `rich` | 6 | 398 | 398 (100% on every seed) | 21–26 per seed (over half of the type injections) | 0/60 on every seed |
+| Ontolith | 2 | 68 | 68 | 0 | 0/60 on both |
+
+"Withheld on purpose" is the cost, and it is larger than Amendment 3 said. I described it as
+swapping one user-defined class name for another. It is also a class swapped for a builtin
+(`-> Style` changed to `-> str`), because either could be an alias, so any type difference
+that involves a name the analysis cannot resolve is not reported. I checked every withheld
+injection against the rule: all are differences the rule calls unprovable, and no provable one
+was missed. The harness now reports these separately from misses, since "missed" would blur a
+deliberate abstention with a failure.
+
+The recall figure above counts only differences the tool is meant to report. Only the four type
+categories can be withheld, and in `rich` more than half of the injected type drift was (about a
+quarter of all injections). Counted as misses, recall on type drift in this repository is well
+below 100%, and that is the price of the precision gain.
+
+Two things the first re-runs got wrong, both in the harness and not the tool: an edit that
+replaced a type with one already among the original's members (so it changed nothing), and a
+docstring edit that changed the word *default* in prose instead of the stated default. Each showed
+up as a miss, and each was checked by reading the source before being called a harness fault.
+
+## What remains
+
+- A `Literal[...]` of strings documented as `str` is still reported. It is a correct, looser doc
+  and should abstain too.
+- The cost above could be cut by knowing which names are classes. The KB already holds the
+  classes of the repository as symbols; resolving an annotation name to one needs import
+  resolution (PRD ING-6). Until then, the safe behaviour is silence.
+- Precision is measured on one package by one reader. A third repository, and a second
+  reader for the labels, are what would let the M1 criterion be called met.

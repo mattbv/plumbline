@@ -394,3 +394,16 @@ Reading the docstrings of the package that prompted B (docstring entry against a
 A docstring that spells out `Optional[int]` or `int | None` itself, against code with no `None`,
 now abstains instead of being reported, because it cannot be told apart from the `optional`
 case. That is the abstention-first rule, and it is the smaller loss.
+
+### What implementing it showed
+
+- **The cost of Amendment 3 C was larger than stated.** It is not only one user-defined name
+  swapped for another: a user-defined class swapped for a builtin (`-> Style` to `-> str`) is
+  also withheld, because either could be an alias. Re-running the seeded-drift evaluation on a
+  package whose docstrings state types, more than half of the injected type drift was
+  withheld this way, and every one of those was a difference the rule calls unprovable. See
+  [the evaluation](../seeded-drift-evaluation.md).
+- **A `Literal[...]` of strings documented as `str` is still reported.** It is a correct,
+  looser doc and should abstain; left for a follow-up.
+- **Names that are classes of the repository could be resolved,** which would recover most of
+  the withheld drift. That needs import resolution (PRD ING-6), and is not decided here.

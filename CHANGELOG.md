@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Type comparison no longer reports differences in spelling (quotes, `List` against `list`,
+  `Optional` against `| None`), reads a documented `optional` as allowing `None`, and stays
+  silent where it cannot prove a difference (an unresolved name that may be an alias, or a
+  bare generic against its parameterization). Docs that omit `None` where the code allows it
+  are still reported. See ADR-0007 Amendments 3 and 4.
+- `100` and `100.0` are the same default, and a quoted word *default* in a sentence is no
+  longer read as the keyword.
+
 ### Added
 
 - M0 foundations scaffold: clean-architecture package layout
