@@ -624,6 +624,30 @@ TYPE_BARE_GENERIC = _typed_scenario(
     ),
 )  # fmt: skip
 
+TYPE_LITERAL_ABSTAINS = _typed_scenario(
+    "type_literal_abstains",
+    "Docs say `str`; the annotation is a union of string `Literal` values",
+    '''
+    from typing import Literal
+
+    def open_file(mode: Literal["r", "rb"] = "r", level: Literal[1, 2] = 1) -> None:
+        """Open.
+
+        Args:
+            mode (str): The mode.
+            level (str): The level.
+        """
+    ''',
+    (
+        ("m.open_file", "param.mode.type", Outcome.ABSTAIN,
+         "Literal['r', 'rb']", "str", None,
+         "Literal['r', 'rb'] is a str: the docs are looser, not wrong."),
+        ("m.open_file", "param.level.type", Outcome.CONTRADICT,
+         "Literal[1, 2]", "str", DriftClass.DOC_VS_CODE,
+         "The values are ints, so documenting them as str is a real disagreement."),
+    ),
+)  # fmt: skip
+
 TYPE_RESOLVED_DISAGREEMENT = _typed_scenario(
     "type_resolved_disagreement",
     "Docs and annotations disagree, using only types the analysis can resolve",
@@ -678,6 +702,7 @@ SCENARIOS: tuple[Scenario, ...] = (
     TYPE_OPTIONAL_BUT_STRICTER,
     TYPE_ALIAS_ABSTAINS,
     TYPE_BARE_GENERIC,
+    TYPE_LITERAL_ABSTAINS,
     TYPE_RESOLVED_DISAGREEMENT,
     DEFAULT_FORMS,
     REQUIRES_PYTHON_BUMP,

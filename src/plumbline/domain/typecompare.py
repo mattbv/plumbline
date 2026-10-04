@@ -74,6 +74,40 @@ def _head(node: ast.expr) -> tuple[str, bool] | None:
     return None
 
 
+_VALUE_TYPES = {str: "str", int: "int", bytes: "bytes", bool: "bool"}
+
+
+def _literal_value_types(node: ast.expr) -> set[str] | None:
+    """The types of the values of a ``Literal[...]``, or ``None`` if it is not one we can read.
+
+    ``Literal['a', 1]`` gives ``{'str', 'int'}``. A value that is not a plain constant
+    (``Color.RED``) makes the answer unknown.
+    """
+    if not (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "Literal"
+    ):
+        return None
+    values = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+    types: set[str] = set()
+    for value in values:
+        if not isinstance(value, ast.Constant) or type(value.value) not in _VALUE_TYPES:
+            return None
+        types.add(_VALUE_TYPES[type(value.value)])
+    return types
+
+
+def _covered_by(literals: list[ast.expr], others: list[ast.expr]) -> bool:
+    """Whether every member is a ``Literal`` whose values are all of types ``others`` name."""
+    named = {m.id for m in others if isinstance(m, ast.Name)}
+    for member in literals:
+        types = _literal_value_types(member)
+        if types is None or not types <= named:
+            return False
+    return bool(literals)
+
+
 def _split_none(members: list[ast.expr]) -> tuple[set[str], bool]:
     """The non-``None`` members as text, and whether ``None`` was among them."""
     texts = {ast.unparse(m) for m in members}
@@ -89,8 +123,9 @@ def is_provable_difference(code_type: str, doc_type: str) -> bool:
       difference (PRD §14 #10); the docs allowing it where the code does not is not (a
       documented ``optional`` on a parameter with a default).
     * Otherwise only the members that differ count. If any of them mentions a name that
-      is not resolved, or a bare generic stands against its own parameterization, the
-      difference is not provable. If they are made only of resolved names it is.
+      is not resolved, a bare generic stands against its own parameterization, or one side
+      is only ``Literal`` values of types the other side names, the difference is not
+      provable. If they are made only of resolved names it is.
     """
     if code_type == doc_type:
         return False
@@ -104,6 +139,9 @@ def is_provable_difference(code_type: str, doc_type: str) -> bool:
     only_code = [m for m in _members(code) if ast.unparse(m) in code_rest - doc_rest]
     only_doc = [m for m in _members(doc) if ast.unparse(m) in doc_rest - code_rest]
     if any(not (_names(m) <= _RESOLVED) for m in [*only_code, *only_doc]):
+        return False
+    # A `Literal['a', 'b']` is a `str`: documenting it as `str` is looser, not wrong.
+    if _covered_by(only_code, only_doc) or _covered_by(only_doc, only_code):
         return False
     code_heads = {h for m in only_code if (h := _head(m))}
     doc_heads = {h for m in only_doc if (h := _head(m))}
