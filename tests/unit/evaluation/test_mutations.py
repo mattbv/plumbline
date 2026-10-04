@@ -224,6 +224,31 @@ class TestDocstringValueEdits:
         out = m.docstring_set_default(self.VALUE, "retries", "8")
         assert out is not None and "Default is 8." in out and "Defaults to 30." in out
 
+    def test_the_stated_default_is_the_literal_not_the_word_default_in_prose(self) -> None:
+        value = (
+            "Doc.\n\nArgs:\n    theme (T, optional): Or None to use default. Defaults to None.\n"
+        )
+        out = m.docstring_set_default(value, "theme", "0")
+        assert (
+            out
+            == "Doc.\n\nArgs:\n    theme (T, optional): Or None to use default. Defaults to 0.\n"
+        )
+
+    def test_with_two_literals_the_last_is_the_stated_default(self) -> None:
+        value = "Doc.\n\nArgs:\n    n (int): Default 1 in tests. Defaults to 3.\n"
+        out = m.docstring_set_default(value, "n", "9")
+        assert out == "Doc.\n\nArgs:\n    n (int): Default 1 in tests. Defaults to 9.\n"
+
+    def test_prose_after_the_default_is_not_mistaken_for_it(self) -> None:
+        value = "Doc.\n\nArgs:\n    n (int): Defaults to 5; see the default behaviour.\n"
+        out = m.docstring_set_default(value, "n", "9")
+        assert out == "Doc.\n\nArgs:\n    n (int): Defaults to 9; see the default behaviour.\n"
+
+    def test_a_default_in_a_continuation_line_is_found(self) -> None:
+        value = "Doc.\n\nArgs:\n    n (int): How many,\n        in total. Defaults to 3.\n"
+        out = m.docstring_set_default(value, "n", "9")
+        assert out is not None and "Defaults to 9." in out
+
     def test_a_parameter_with_no_stated_default_is_none(self) -> None:
         assert m.docstring_set_default(self.VALUE, "host", "1") is None
         assert m.docstring_set_default(self.VALUE, "zzz", "1") is None

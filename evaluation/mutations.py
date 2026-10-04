@@ -280,20 +280,29 @@ def _entry_lines(lines: list[str], param: str) -> tuple[int, int] | None:
 
 
 def docstring_set_default(value: str, param: str, new_text: str) -> str | None:
-    """Change the default the docstring states for ``param`` (prose such as "Defaults to 30")."""
+    """Change the default the docstring states for ``param`` (prose such as "Defaults to 30").
+
+    The stated default is the *last* phrase in the entry whose value is a real literal, so
+    "or None to use default. Defaults to None." changes the second sentence, not the first.
+    """
     lines = value.split("\n")
     entry = _entry_lines(lines, param)
     if entry is None:
         return None
+    found: tuple[int, int, int] | None = None  # (line, start, end) of the value
     for i in range(*entry):
-        match = _DEFAULT.search(lines[i])
-        if match:
-            token = match[2]
-            core = token.rstrip(".,;)")  # keep the sentence's own punctuation
-            end = match.start(2) + len(core)
-            lines[i] = lines[i][: match.start(2)] + new_text + lines[i][end:]
-            return "\n".join(lines)
-    return None
+        for match in _DEFAULT.finditer(lines[i]):
+            core = match[2].rstrip(".,;)")  # keep the sentence's own punctuation
+            try:
+                ast.literal_eval(core.strip("`"))
+            except (ValueError, SyntaxError):
+                continue
+            found = (i, match.start(2), match.start(2) + len(core))
+    if found is None:
+        return None
+    i, start, end = found
+    lines[i] = lines[i][:start] + new_text + lines[i][end:]
+    return "\n".join(lines)
 
 
 def docstring_set_param_type(value: str, param: str, new_type: str) -> str | None:

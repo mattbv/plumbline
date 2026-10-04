@@ -49,9 +49,28 @@ class TestJudge:
         out = sd.judge(injection(), [item("8", "1", fact="py:m.f#param.y.default")])
         assert out.verdict == "missed" and out.extra_findings == ["py:m.f#param.y.default"]
 
+    def test_an_unprovable_type_difference_is_abstained_not_missed(self) -> None:
+        inj = injection(expect_fact="py:m.f#param.x.type", expect_code="str", expect_docs="Style")
+        assert sd.judge(inj, []).verdict == "abstained"
+
+    def test_a_provable_type_difference_that_was_not_found_is_still_a_miss(self) -> None:
+        inj = injection(expect_fact="py:m.f#param.x.type", expect_code="str", expect_docs="int")
+        assert sd.judge(inj, []).verdict == "missed"
+
+    def test_a_default_is_never_abstained(self) -> None:
+        assert sd.judge(injection(expect_code="1", expect_docs="Style"), []).verdict == "missed"
+
     def test_the_right_fact_with_the_wrong_values_is_not_counted_as_found(self) -> None:
         assert sd.judge(injection(), [item("9", "1")]).verdict == "found_wrong_values"
         assert sd.judge(injection(), [item("8", "2")]).verdict == "found_wrong_values"
+
+    def test_an_alternative_doc_value_that_is_also_right_counts(self) -> None:
+        inj = injection(expect_docs="str", alt_docs=("None | str",))
+        assert sd.judge(inj, [item("8", "None | str")]).verdict == "found"
+
+    def test_a_value_that_is_neither_is_not_found(self) -> None:
+        inj = injection(expect_docs="str", alt_docs=("None | str",))
+        assert sd.judge(inj, [item("8", "bytes")]).verdict == "found_wrong_values"
 
     def test_extra_findings_beside_the_expected_one_are_recorded(self) -> None:
         out = sd.judge(injection(), [item("8", "1"), item("1", "2", fact="py:m.f#other")])
@@ -86,6 +105,14 @@ class TestReport:
         )
         assert r.recall() == (1, 3)
 
+    def test_abstentions_are_in_neither_side_of_recall(self) -> None:
+        r = self.report(
+            self.outcome("code_default", "found"),
+            self.outcome("code_param_type", "abstained"),
+            self.outcome("code_return_type", "abstained"),
+        )
+        assert r.recall() == (1, 1) and r.abstained() == 2
+
     def test_false_positives_count_only_controls(self) -> None:
         r = self.report(
             self.outcome("comment_added", "false_positive"),
@@ -108,7 +135,7 @@ class TestReport:
     def test_the_text_report_shows_misses_and_shortfalls(self) -> None:
         r = self.report(self.outcome("code_default", "missed"), requested={"code_default": 2})
         text = sd.format_report(r)
-        assert "RECALL on injected drift      0/1 = 0%" in text
+        assert "RECALL on provable drift     0/1 = 0%" in text
         assert "SHORTFALL" in text and "code_default: 1 of 2" in text
         assert "[missed]" in text
 
@@ -244,3 +271,21 @@ class TestWhichEditsApply:
         assert control is not None
         out = control.edit(self.PLAIN)
         assert out is not None and "a: int" in out and "b: int" in out
+
+
+class TestOtherType:
+    @pytest.mark.parametrize(
+        ("original", "replacement"),
+        [
+            ("int", "str"),
+            ("str", "int"),
+            ("None | str", "int"),
+            ("int | str", "bytes"),
+            ("list[str]", "str"),
+            ("Style", "str"),
+        ],
+    )
+    def test_the_replacement_is_never_one_of_the_original_members(
+        self, original: str, replacement: str
+    ) -> None:
+        assert sd._other_type(original) == replacement

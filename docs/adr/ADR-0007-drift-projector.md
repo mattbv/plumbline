@@ -344,3 +344,66 @@ cosmetically.
 3. The seeded-drift evaluation re-run on `rich` and on Ontolith. Recall on injected drift
    must not fall. The unmodified `rich` findings are re-read, and the write-up says how many of
    the earlier false positives are gone, and what is left and why.
+
+## Amendment 4: nullability is compared after all (revises Amendment 3 B)
+
+Amendment 3 B decided that `None` is never compared. Implementing it ran into the zoo
+scenario `type_omits_none` and, behind it, PRD §14 Worked Example #10: a docstring that says
+`int` against an annotation `int | None` is **real drift** ("the docs omit `None`"), with the
+per-fact waiver as the escape hatch for a team that finds it noisy. Amendment 3 B overrode that
+without saying so. This revises B so that the PRD example holds, and keeps what B was for.
+
+### What B was for, measured
+
+Reading the docstrings of the package that prompted B (docstring entry against annotation):
+
+| Docstring says `optional` | Annotation has `None` | Entries |
+|---|---|---|
+| no | no | 297 |
+| no | yes | 19 |
+| yes | no | 218 |
+| yes | yes | 166 |
+
+- **Docstring says `optional`, annotation has `None` (166).** These agree, and under string
+  comparison they were reported as disagreeing. This is most of what B set out to remove.
+- **Docstring says `optional`, annotation has no `None` (218).** In the Google style `optional`
+  means *the argument may be omitted*: it is true of every parameter with a default. Stating
+  `| None` for these in the code's favour would be wrong, and reporting them is the false
+  positive B warned about.
+- **Docstring does not say `optional`, annotation has `None` (19).** This is Worked Example #10,
+  and these are the findings B would have thrown away.
+
+### The rule
+
+1. **The canonical type form keeps `None`.** `Optional[X]` and `X | None` are the same thing, and
+   `X` is a different one. (This reverses Amendment 3 B's dropping of `None`; the rest of A stands.)
+2. **A docstring that says `optional` states that `None` is allowed.** The docstring importer
+   adds `None` to the type it claims when the entry says `optional` (Google `(int, optional)`,
+   NumPy `int, optional`), unless the type already contains it. So `(StyleType, optional)`
+   against `Optional[StyleType]` agree.
+3. **The projector abstains when the only difference is that the docs allow `None` and the code
+   does not.** That is the 218: `(int, optional)` against `int = 5`. The docs permit omission and
+   the code is stricter, which is not provably wrong. The reverse (code allows `None`, docs do
+   not) is reported, as Worked Example #10 requires.
+4. Amendment 3 C stands for everything else, and is applied to what is left once `None` is set
+   aside: unresolved names and bare generics abstain; a disagreement made only of resolved names
+   is reported.
+
+### Cost
+
+A docstring that spells out `Optional[int]` or `int | None` itself, against code with no `None`,
+now abstains instead of being reported, because it cannot be told apart from the `optional`
+case. That is the abstention-first rule, and it is the smaller loss.
+
+### What implementing it showed
+
+- **The cost of Amendment 3 C was larger than stated.** It is not only one user-defined name
+  swapped for another: a user-defined class swapped for a builtin (`-> Style` to `-> str`) is
+  also withheld, because either could be an alias. Re-running the seeded-drift evaluation on a
+  package whose docstrings state types, more than half of the injected type drift was
+  withheld this way, and every one of those was a difference the rule calls unprovable. See
+  [the evaluation](../seeded-drift-evaluation.md).
+- **A `Literal[...]` of strings documented as `str` is still reported.** It is a correct,
+  looser doc and should abstain; left for a follow-up.
+- **Names that are classes of the repository could be resolved,** which would recover most of
+  the withheld drift. That needs import resolution (PRD ING-6), and is not decided here.

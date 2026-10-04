@@ -43,7 +43,7 @@ from pathlib import Path
 from plumbline.adapters._pysource import module_name
 from plumbline.application.drift import DriftItem
 from plumbline.application.projection import PROJECTOR_PRINCIPAL
-from plumbline.domain import canonical
+from plumbline.domain import canonical, typecompare
 from plumbline.interfaces.pipeline import Pipeline, open_pipeline
 
 from . import mutations as m
@@ -85,6 +85,8 @@ class Injection:
     expect_fact: str | None = None
     expect_code: str | None = None
     expect_docs: str | None = None
+    alt_docs: tuple[str, ...] = ()
+    """Other doc values that are right too: `(str, optional)` reads as `None | str`."""
 
     @property
     def kind(self) -> str:
@@ -129,7 +131,13 @@ def _other_literal(canonical_value: str) -> str | None:
 
 
 def _other_type(canonical_type: str) -> str:
-    return "int" if canonical_type == "str" else "str"
+    """A resolved type that is not one of the members of ``canonical_type``.
+
+    Replacing ``None | str`` with ``str`` would change nothing in meaning, so the
+    replacement must differ from every member, not only from the whole.
+    """
+    members = {part.strip() for part in canonical_type.split("|")}
+    return next(t for t in ("str", "int", "bytes") if t not in members)
 
 
 def discover(pipeline: Pipeline) -> tuple[list[Candidate], set[str]]:
@@ -179,11 +187,11 @@ def _docstring_edit(
 
 def _drift(
     c: Candidate, category: str, what: str, edit: Callable[[str], str | None],
-    code: str | None, docs: str | None, fact: str | None = None,
+    code: str | None, docs: str | None, fact: str | None = None, alt_docs: tuple[str, ...] = (),
 ) -> Injection:  # fmt: skip
     return Injection(
         category, c.path, c.qualname, f"{c.path}::{c.qualname}: {what}", edit,
-        expect_fact=fact or c.fact_key, expect_code=code, expect_docs=docs,
+        expect_fact=fact or c.fact_key, expect_code=code, expect_docs=docs, alt_docs=alt_docs,
     )  # fmt: skip
 
 
@@ -219,6 +227,7 @@ def build(category: str, c: Candidate, claimed: set[str], counter: int) -> Injec
         return _drift(
             c, category, f"docstring type of `{param}` {c.value} -> {other}",
             lambda s: doc_edit(s, qual), code=c.value, docs=other,
+            alt_docs=(canonical.canonical_type_annotation(f"{other} | None"),),
         )  # fmt: skip
     if category in ("code_return_type", "docs_return_type") and c.aspect == "returns.type":
         other = _other_type(c.value)
@@ -359,6 +368,19 @@ def _git(repo: Path, *args: str, when: str | None = None) -> str:
     return done.stdout.strip()
 
 
+def _unprovable(inj: Injection) -> bool:
+    """Whether the projector is *meant* to stay silent about this injected type difference.
+
+    A type disagreement it cannot prove (an unresolved name that may be an alias, or a bare
+    generic) is withheld on purpose (ADR-0007 Amendments 3 and 4). That is a deliberate
+    cost, not a failure, and the report keeps the two apart.
+    """
+    aspect = (inj.expect_fact or "").partition("#")[2]
+    if not typecompare.is_type_aspect(aspect) or None in (inj.expect_code, inj.expect_docs):
+        return False
+    return not typecompare.is_provable_difference(str(inj.expect_code), str(inj.expect_docs))
+
+
 def judge(inj: Injection, new: list[DriftItem]) -> Outcome:
     """Compare what newly opened with what the injection should have caused."""
     keys = [i.fact_key for i in new]
@@ -367,10 +389,11 @@ def judge(inj: Injection, new: list[DriftItem]) -> Outcome:
         hit = next((i for i in new if i.fact_key == inj.expect_fact), None)
         out.extra_findings = [k for k in keys if k != inj.expect_fact]
         if hit is None:
-            out.verdict = "missed"
+            out.verdict = "abstained" if _unprovable(inj) else "missed"
         else:
             docs = {c.value for c in hit.claims if c.author != PROJECTOR_PRINCIPAL}
-            ok = hit.code_value == inj.expect_code and inj.expect_docs in docs
+            wanted_docs = {inj.expect_docs, *inj.alt_docs}
+            ok = hit.code_value == inj.expect_code and bool(wanted_docs & docs)
             out.verdict = "found" if ok else "found_wrong_values"
     elif inj.kind == "control":
         out.extra_findings = keys
@@ -416,9 +439,17 @@ class Report:
         return {c: (done[c], wanted) for c, wanted in self.requested.items() if done[c] < wanted}
 
     def recall(self) -> tuple[int, int]:
-        """``(found, injected)`` over every injection that was made."""
-        injected = [o for o in self.outcomes if o.kind == "inject"]
+        """``(found, injected)`` over the injections the tool is meant to report.
+
+        Injected differences it is meant to withhold (``abstained``) are counted by
+        :meth:`abstained` and are not in either number.
+        """
+        injected = [o for o in self.outcomes if o.kind == "inject" and o.verdict != "abstained"]
         return sum(o.verdict == "found" for o in injected), len(injected)
+
+    def abstained(self) -> int:
+        """Injected type differences withheld on purpose because they cannot be proven."""
+        return sum(o.verdict == "abstained" for o in self.outcomes)
 
     def false_positives(self) -> tuple[int, int]:
         """Controls that produced a finding, out of all controls."""
@@ -547,6 +578,7 @@ def format_report(report: Report) -> str:
         "found",
         "found_wrong_values",
         "missed",
+        "abstained",
         "clean",
         "false_positive",
         "silent",
@@ -565,8 +597,9 @@ def format_report(report: Report) -> str:
     fp, controls = report.false_positives()
     lines += [
         "",
-        f"RECALL on injected drift      {found}/{injected}"
+        f"RECALL on provable drift     {found}/{injected}"
         + (f" = {found / injected:.0%}" if injected else ""),
+        f"ABSTAINED on purpose          {report.abstained()}  (unprovable type differences)",
         f"FALSE POSITIVES on controls   {fp}/{controls}",
         f"EXTRA findings on injections  {report.extras_on_injections()}",
     ]

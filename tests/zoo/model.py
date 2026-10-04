@@ -101,6 +101,9 @@ class Expectation:
         previous_code_value: L1 only -- the canonical value before this commit.
         claims: L2 only -- ``(importer principal, canonical value)`` for every
             active doc claim on the slot after this commit.
+        withheld_value: ``ABSTAIN`` only -- a value the code importer *does* state for this
+            slot, which the projector withholds because the difference from the docs
+            cannot be proven (ADR-0007 Amendments 3 and 4). ``code_value`` stays ``None``.
         drift_class: Required for ``CONTRADICT`` (DRF-4).
         introduced_in: For ``CONTRADICT``, the commit whose apply opened the
             contradiction (defaults to ``commit``); later commits that leave it
@@ -117,6 +120,7 @@ class Expectation:
     outcome: Outcome
     code_value: str | None = None
     previous_code_value: str | None = None
+    withheld_value: str | None = None
     claims: tuple[tuple[str, str], ...] = ()
     drift_class: DriftClass | None = None
     introduced_in: str | None = None

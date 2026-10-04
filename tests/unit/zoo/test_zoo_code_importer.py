@@ -76,7 +76,11 @@ def test_importer_matches_the_zoo_labels(scenario: Scenario, exp: Expectation) -
         # A labeled 'false' is only sound if the importer really never bound the name.
         assert slot not in projected, "the zoo says absent, but the importer found the name"
     if exp.outcome is Outcome.ABSTAIN:
-        assert slot not in projected, "the zoo says the projector must abstain here"
+        if exp.withheld_value is not None:
+            # The importer states a value; the projector withholds it (ADR-0007 A3/A4).
+            assert _stated_or_derived(projected, exp) == exp.withheld_value
+        else:
+            assert slot not in projected, "the zoo says the projector must abstain here"
         return
     if exp.outcome is Outcome.UNDOCUMENTED:
         return  # 'nothing to compare' is decided downstream of extraction

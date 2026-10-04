@@ -82,19 +82,19 @@ class TestWhatIsProjected:
 
     def test_a_claim_about_to_be_written_counts_as_documentation(self) -> None:
         """The slot must be projected in the same commit its first claim arrives."""
-        steps = plan(FakeKB(), [FACT], DocChanges(frozenset(), {FACT: 1})).steps
+        steps = plan(FakeKB(), [FACT], DocChanges(frozenset(), {FACT: ["30"]})).steps
         assert len(steps) == 1 and steps[0].assert_
 
     def test_the_last_claim_leaving_withdraws_the_projection(self) -> None:
         kb = FakeKB()
         kb.claims[FACT] = [doc("d1"), projection()]
-        [step] = plan(kb, [FACT], DocChanges(frozenset({"d1"}), {FACT: 0})).steps
+        [step] = plan(kb, [FACT], DocChanges(frozenset({"d1"}), {FACT: []})).steps
         assert [c.claim_id for c in step.retract] == ["p1"] and step.assert_ == []
 
     def test_another_remaining_claim_keeps_the_projection(self) -> None:
         kb = FakeKB()
         kb.claims[FACT] = [doc("d1"), doc("d2", author="plumb-docs"), projection()]
-        assert plan(kb, [FACT], DocChanges(frozenset({"d1"}), {FACT: 0})).steps == []
+        assert plan(kb, [FACT], DocChanges(frozenset({"d1"}), {FACT: []})).steps == []
 
 
 class TestChangingTheProjection:
@@ -196,3 +196,80 @@ class TestClaimShape:
         kb.symbols["py:pkg.m.f"]["is_deprecated"] = "false"
         steps = plan(kb, ["py:pkg.m.f#exists", "py:pkg.m.f#deprecated"]).steps
         assert [s.fact_key for s in steps] == sorted(s.fact_key for s in steps)
+
+
+TYPED_SIG = (
+    '{"param_names":["host","timeout","mode"],"params":{"timeout":{"type":"int"},'
+    '"mode":{"type":"JustifyMethod"},"host":{"type":"None | str"}},"returns":"int","v":1}'
+)
+TYPE_FACT = "py:pkg.m.f#param.timeout.type"
+ALIAS_FACT = "py:pkg.m.f#param.mode.type"
+NULLABLE_FACT = "py:pkg.m.f#param.host.type"
+
+
+def typed_kb() -> FakeKB:
+    kb = FakeKB()
+    kb.symbols["py:pkg.m.f"]["signature_json"] = TYPED_SIG
+    return kb
+
+
+class TestTypesThatCannotBeProvenDifferent:
+    """A type disagreement is stated only when it is provable (ADR-0007 Amendments 3 and 4)."""
+
+    def test_a_provable_disagreement_is_stated(self) -> None:
+        kb = typed_kb()
+        kb.claims[TYPE_FACT] = [doc(value="str")]
+        [step] = plan(kb, [TYPE_FACT]).steps
+        assert [c.raw_value for c in step.assert_] == ["int"]
+
+    def test_docs_that_allow_none_where_the_code_does_not_abstain(self) -> None:
+        kb = typed_kb()
+        kb.claims[TYPE_FACT] = [doc(value="None | int")]
+        result = plan(kb, [TYPE_FACT])
+        assert result.steps == [] and result.abstained == 1
+
+    def test_docs_that_omit_none_are_stated_against(self) -> None:
+        """PRD §14 #10."""
+        kb = typed_kb()
+        kb.claims[NULLABLE_FACT] = [doc(value="str")]
+        [step] = plan(kb, [NULLABLE_FACT]).steps
+        assert [c.raw_value for c in step.assert_] == ["None | str"]
+
+    def test_a_name_that_may_be_an_alias_abstains(self) -> None:
+        kb = typed_kb()
+        kb.claims[ALIAS_FACT] = [doc(value="str")]
+        result = plan(kb, [ALIAS_FACT])
+        assert result.steps == [] and result.abstained == 1
+
+    def test_agreement_is_corroborated(self) -> None:
+        kb = typed_kb()
+        kb.claims[ALIAS_FACT] = [doc(value="JustifyMethod")]
+        [step] = plan(kb, [ALIAS_FACT]).steps
+        assert [c.raw_value for c in step.assert_] == ["JustifyMethod"]
+
+    def test_a_claim_about_to_be_written_is_compared_too(self) -> None:
+        """The first docstring that arrives is the one that must not be disputed."""
+        result = plan(typed_kb(), [ALIAS_FACT], DocChanges(frozenset(), {ALIAS_FACT: ["str"]}))
+        assert result.steps == [] and result.abstained == 1
+
+    def test_a_projection_is_withdrawn_when_the_docs_change_to_something_unprovable(self) -> None:
+        kb = typed_kb()
+        kb.claims[TYPE_FACT] = [doc("d2", value="None | int"), projection(value="int")]
+        [step] = plan(kb, [TYPE_FACT]).steps
+        assert [c.claim_id for c in step.retract] == ["p1"] and step.assert_ == []
+
+    def test_a_claim_about_to_be_withdrawn_is_not_compared(self) -> None:
+        """Only the docs that remain decide: the one leaving is the provable one."""
+        kb = typed_kb()
+        kb.claims[TYPE_FACT] = [
+            doc("d1", value="str"),
+            doc("d2", author="plumb-docs", value="None | int"),
+        ]
+        result = plan(kb, [TYPE_FACT], DocChanges(frozenset({"d1"}), {TYPE_FACT: []}))
+        assert result.steps == [] and result.abstained == 1
+
+    def test_defaults_are_never_subject_to_this_rule(self) -> None:
+        kb = FakeKB()
+        kb.claims[FACT] = [doc(value="45")]
+        [step] = plan(kb, [FACT]).steps
+        assert [c.raw_value for c in step.assert_] == ["30"]

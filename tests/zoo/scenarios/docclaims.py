@@ -189,7 +189,7 @@ DOCSTRING_NUMPY_STYLE = Scenario(
         ),
         Expectation(
             "c1", sym(_ID7, "client.connect"), "param.timeout.type", Layer.L2,
-            Outcome.ABSTAIN, code_value=None, claims=((_DS, "int"),),
+            Outcome.ABSTAIN, code_value=None, claims=((_DS, "None | int"),),
             note="The code has no annotation and the projector never infers types (PRD 7.4).",
         ),
         Expectation(
