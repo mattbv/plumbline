@@ -28,6 +28,49 @@ _RESOLVED = frozenset(
 )  # fmt: skip
 
 
+_TOP = frozenset({"object", "Any"})
+"""The top types: documenting one is true of every type, including ``None``."""
+_SUPERTYPES: dict[str, frozenset[str]] = {
+    "list": frozenset({"Sequence", "MutableSequence", "Collection", "Iterable"}),
+    "tuple": frozenset({"Sequence", "Collection", "Iterable", "Hashable"}),
+    "str": frozenset({"Sequence", "Collection", "Iterable", "Hashable"}),
+    "bytes": frozenset({"Sequence", "Collection", "Iterable", "Hashable"}),
+    "dict": frozenset({"Mapping", "MutableMapping", "Collection", "Iterable"}),
+    "set": frozenset({"AbstractSet", "MutableSet", "Collection", "Iterable"}),
+    "frozenset": frozenset({"AbstractSet", "Collection", "Iterable", "Hashable"}),
+    "Sequence": frozenset({"Collection", "Iterable"}),
+    "MutableSequence": frozenset({"Sequence", "Collection", "Iterable"}),
+    "Mapping": frozenset({"Collection", "Iterable"}),
+    "MutableMapping": frozenset({"Mapping", "Collection", "Iterable"}),
+    "AbstractSet": frozenset({"Collection", "Iterable"}),
+    "MutableSet": frozenset({"AbstractSet", "Collection", "Iterable"}),
+    "Collection": frozenset({"Iterable"}),
+    "Iterator": frozenset({"Iterable"}),
+    "Generator": frozenset({"Iterator", "Iterable"}),
+    "int": frozenset({"float", "complex", "Hashable"}),
+    "float": frozenset({"complex", "Hashable"}),
+    "bool": frozenset({"int", "float", "complex", "Hashable"}),
+}
+"""Which resolved names are supertypes of which (typing's numeric tower included).
+Written out, never read from the interpreter, so the answer cannot vary by Python version."""
+
+
+def is_default_aspect(aspect: str) -> bool:
+    """Whether a slot holds a parameter's default (``param.<p>.default``)."""
+    return aspect.startswith("param.") and aspect.endswith(".default")
+
+
+def should_abstain_default(code_default: str, doc_defaults: Collection[str]) -> bool:
+    """Whether the projector must not state the code's default for a slot.
+
+    A code default of ``None`` usually means "computed or unset", so a docs default that
+    states the effective value (``engine=None`` documented as ``default 'numexpr'``) is not
+    provably wrong (ADR-0007 Amendment 5 D). A concrete code default against a different
+    documented one is still a real disagreement, and so is docs saying ``None`` over a value.
+    """
+    return code_default == "None" and any(d != "None" for d in doc_defaults)
+
+
 def is_type_aspect(aspect: str) -> bool:
     """Whether a slot holds a type (``param.<p>.type`` or ``returns.type``)."""
     return aspect == "returns.type" or (aspect.startswith("param.") and aspect.endswith(".type"))
@@ -108,6 +151,42 @@ def _covered_by(literals: list[ast.expr], others: list[ast.expr]) -> bool:
     return bool(literals)
 
 
+def _args(node: ast.expr) -> str:
+    """The type arguments of a parameterized type as text; ``tuple[X, ...]`` counts as ``X``."""
+    if not isinstance(node, ast.Subscript):
+        return ""
+    inner = node.slice
+    if (
+        isinstance(node.value, ast.Name)
+        and node.value.id == "tuple"
+        and isinstance(inner, ast.Tuple)
+        and len(inner.elts) == 2
+        and isinstance(inner.elts[1], ast.Constant)
+        and inner.elts[1].value is Ellipsis
+    ):
+        inner = inner.elts[0]
+    return ast.unparse(inner)
+
+
+def _loosens(doc: ast.expr, code: ast.expr) -> bool:
+    """Whether the docs' member is a supertype of the code's (a less specific, true statement)."""
+    doc_head, code_head = _head(doc), _head(code)
+    if doc_head is None or code_head is None:
+        return False
+    if doc_head[0] in _TOP:
+        return True
+    if doc_head[0] != code_head[0] and doc_head[0] not in _SUPERTYPES.get(code_head[0], ()):
+        return False
+    return not doc_head[1] or _args(doc) == _args(code)
+
+
+def _loosened_by(code_members: list[ast.expr], doc_members: list[ast.expr]) -> bool:
+    """Whether every differing code member is covered by some docs member that is a supertype."""
+    return bool(code_members) and all(
+        any(_loosens(d, c) for d in doc_members) for c in code_members
+    )
+
+
 def _split_none(members: list[ast.expr]) -> tuple[set[str], bool]:
     """The non-``None`` members as text, and whether ``None`` was among them."""
     texts = {ast.unparse(m) for m in members}
@@ -124,8 +203,9 @@ def is_provable_difference(code_type: str, doc_type: str) -> bool:
       documented ``optional`` on a parameter with a default).
     * Otherwise only the members that differ count. If any of them mentions a name that
       is not resolved, a bare generic stands against its own parameterization, or one side
-      is only ``Literal`` values of types the other side names, the difference is not
-      provable. If they are made only of resolved names it is.
+      is only ``Literal`` values of types the other side names, or the docs name a supertype of
+      each differing code member (less specific, not wrong), the difference is not provable.
+      If they are made only of resolved names it is.
     """
     if code_type == doc_type:
         return False
@@ -143,6 +223,11 @@ def is_provable_difference(code_type: str, doc_type: str) -> bool:
     # A `Literal['a', 'b']` is a `str`: documenting it as `str` is looser, not wrong.
     if _covered_by(only_code, only_doc) or _covered_by(only_doc, only_code):
         return False
+    if _loosened_by(only_code, only_doc):
+        # Less specific, not wrong. A top type already covers None; any other supertype does not
+        # say, so docs that omit a None the code allows are still reported (PRD §14 #10).
+        covers_none = doc_none or any(_head(m) and _head(m)[0] in _TOP for m in only_doc)  # type: ignore[index]
+        return code_none and not covers_none
     code_heads = {h for m in only_code if (h := _head(m))}
     doc_heads = {h for m in only_doc if (h := _head(m))}
     # `Callable` against `Callable[[int], str]`: the docs left the parameters out.

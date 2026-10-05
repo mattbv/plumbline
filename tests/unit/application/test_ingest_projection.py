@@ -206,7 +206,10 @@ class TestStopsStating:
         report = h.commit(code=self.decorated(60))
         assert ("py:pkg.m.f", "signature_json") in h.kb.withdrawn
         assert "signature_json" not in (h.kb.symbols["py:pkg.m.f"])
-        assert report.fields_withdrawn == 1
+        # The unknown decorator also stops "not deprecated" being a claim we can back
+        # (ADR-0004 Amendment 3), so that field goes too.
+        assert ("py:pkg.m.f", "is_deprecated") in h.kb.withdrawn
+        assert report.fields_withdrawn == 2
 
     def test_so_the_projection_goes_and_the_slot_is_an_honest_abstention(self) -> None:
         h = started()
