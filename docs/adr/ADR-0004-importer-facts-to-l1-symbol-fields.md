@@ -217,3 +217,21 @@ stops stating.)
 
 *Cost.* A function the docs call deprecated, which carries an unknown decorator and no visible
 marker, is no longer reported as "the code says it is not". We cannot tell.
+
+## Amendment 4: a deprecation helper counts like `warn` (proposed)
+
+[Measuring packages the rules had not been written for](../precision-on-three-packages.md) found
+a function deprecated through `_api.warn_deprecated("3.10", ...)`. The helper's name says what it
+does but is not `warn`, so Amendment 3's rule did not see it and the importer stated the function
+was not deprecated.
+
+A call counts as a deprecation notice if its callee's last name is `warn`, **or contains
+"deprecat"** (`warn_deprecated`, `_deprecate`, `emit_deprecation`):
+
+- as a leading statement of the body (after the docstring and imports) it makes
+  `is_deprecated = true`, as a leading `warn` does;
+- anywhere in the body it stops the importer saying `false`, so the field is not stated.
+
+*Cost.* A function that calls such a helper for something other than its own deprecation (a
+helper that deprecates an argument) is no longer stated "not deprecated". That is the smaller
+loss: the field is then absent, and the slot abstains.

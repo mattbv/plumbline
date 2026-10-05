@@ -504,3 +504,51 @@ and will be re-run with a category for each.
 3. The seeded-drift evaluation re-run: recall on provable drift must not fall, and the withheld
    count is reported.
 4. A second reader labelling a sample of what remains, because every label so far is mine.
+
+## Amendment 6: `*args`, parameter notes, and what a deprecation note is (proposed)
+
+Three causes of false positives came out of packages the earlier rules had never seen
+([report](../precision-on-three-packages.md)). The first set of packages that revealed them is
+now spent for tuning; these rules are to be tested on packages chosen beforehand and not yet read.
+
+### A. `*args` makes a missing positional parameter unprovable
+
+`param.<p>.exists` is stated `false` only if `p` is not a named parameter **and the signature has
+neither `*args` nor `**kwargs`**. Today only `**kwargs` is considered. `pts_to_midstep(x, *args)`
+documents `y1` and `yp`, which are what `*args` receives; `Bbox.from_extents(*args)` documents
+`left`, `bottom`, `right`, `top`. In the measured packages this was 14 of 22 false positives.
+
+*Cost.* A parameter documented on a function with `*args` that really does not exist is no longer
+reported.
+
+### B. A deprecation note is about a parameter if it says so, wherever it sits
+
+Amendment 5 A tested the **first line after** the directive, and required that line to be
+indented. Two gaps:
+
+- `.. deprecated:: 3.11` followed by a **blank line** and then the note (the usual numpydoc
+  layout) was read as having no note, so it counted as deprecating the function.
+- The note was recognized only when it began "This keyword/parameter/argument/option".
+  `matplotlib.ScaleBase.__init__` has a directive in a *Notes* section reading "The *axis*
+  parameter is now optional…".
+
+The note is the **first non-empty line after the directive**, indented or not. It is about a
+parameter if it begins `This` or `The`, optionally followed by one name (`*axis*`, `` `copy` ``,
+`axis`), and then `keyword`, `parameter`, `argument` or `option`. Such a directive is ignored.
+
+### Not included, on purpose
+
+A docstring template placeholder (`DATA_PARAMETER_PLACEHOLDER`, filled in by a decorator elsewhere)
+was one finding, in one project's convention. A rule for it would be shaped to that project, and
+one instance does not show it recurs. It is recorded as a known limit.
+
+### How it will be verified
+
+1. Unit tests per rule and a zoo scenario per cause, each with the neighbouring case that must
+   still be reported (a documented parameter on a function without `*args`; a directive with
+   an ordinary note).
+2. Five packages chosen and baselined **before** this amendment was written (`xarray`, `astropy`,
+   `dask`, `seaborn`, `sympy`: 192 findings in total) are read only after the rules exist, and the
+   result is reported whatever it is, including new causes.
+3. The earlier packages are re-run as a regression check only: a finding I labelled REAL must not
+   disappear.
