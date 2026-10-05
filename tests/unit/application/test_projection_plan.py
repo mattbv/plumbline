@@ -273,3 +273,52 @@ class TestTypesThatCannotBeProvenDifferent:
         kb.claims[FACT] = [doc(value="45")]
         [step] = plan(kb, [FACT]).steps
         assert [c.raw_value for c in step.assert_] == ["30"]
+
+
+SENTINEL_SIG = '{"param_names":["host","engine"],"params":{"engine":{"default":"None"}},"v":1}'
+SENTINEL_FACT = "py:pkg.m.f#param.engine.default"
+
+
+class TestNoneDefaultIsASentinel:
+    """ADR-0007 Amendment 5 D: a None default behind a documented effective default abstains."""
+
+    def kb(self) -> FakeKB:
+        kb = FakeKB()
+        kb.symbols["py:pkg.m.f"]["signature_json"] = SENTINEL_SIG
+        return kb
+
+    def test_a_documented_concrete_default_behind_none_abstains(self) -> None:
+        kb = self.kb()
+        kb.claims[SENTINEL_FACT] = [doc(value="'numexpr'")]
+        result = plan(kb, [SENTINEL_FACT])
+        assert result.steps == [] and result.abstained == 1
+
+    def test_agreement_on_none_is_corroborated(self) -> None:
+        kb = self.kb()
+        kb.claims[SENTINEL_FACT] = [doc(value="None")]
+        [step] = plan(kb, [SENTINEL_FACT]).steps
+        assert [c.raw_value for c in step.assert_] == ["None"]
+
+    def test_a_claim_about_to_be_written_is_compared_too(self) -> None:
+        result = plan(
+            self.kb(), [SENTINEL_FACT], DocChanges(frozenset(), {SENTINEL_FACT: ["'numexpr'"]})
+        )
+        assert result.steps == [] and result.abstained == 1
+
+    def test_a_projection_is_withdrawn_when_the_docs_become_a_concrete_default(self) -> None:
+        kb = self.kb()
+        kb.claims[SENTINEL_FACT] = [doc("d2", value="'numexpr'"), projection(value="None")]
+        [step] = plan(kb, [SENTINEL_FACT]).steps
+        assert [c.claim_id for c in step.retract] == ["p1"] and step.assert_ == []
+
+    def test_a_concrete_code_default_against_docs_saying_none_is_still_reported(self) -> None:
+        kb = FakeKB()  # the standard fixture has a concrete default of 30
+        kb.claims[FACT] = [doc(value="None")]
+        [step] = plan(kb, [FACT]).steps
+        assert [c.raw_value for c in step.assert_] == ["30"]
+
+    def test_types_are_not_affected(self) -> None:
+        kb = typed_kb()
+        kb.claims[TYPE_FACT] = [doc(value="str")]
+        [step] = plan(kb, [TYPE_FACT]).steps
+        assert [c.raw_value for c in step.assert_] == ["int"]

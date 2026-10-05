@@ -41,6 +41,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from plumbline.adapters._pysource import module_name
+from plumbline.adapters.python_code_importer import _deprecation
 from plumbline.application.drift import DriftItem
 from plumbline.application.projection import PROJECTOR_PRINCIPAL
 from plumbline.domain import canonical, typecompare
@@ -259,8 +260,8 @@ def build(category: str, c: Candidate, claimed: set[str], counter: int) -> Injec
         doc_edit = _docstring_edit(lambda v, indent: m.docstring_add_deprecated(v, indent))
         return _drift(
             c, category, "docstring declares it deprecated; the code does not",
-            lambda s: doc_edit(s, qual), code="false", docs="true",
-            fact=f"{c.symbol_key}#deprecated",
+            lambda s: _guard_deprecation(s, qual, lambda: doc_edit(s, qual)),
+            code="false", docs="true", fact=f"{c.symbol_key}#deprecated",
         )  # fmt: skip
     return _control(category, c, claimed, counter)
 
@@ -345,6 +346,17 @@ def _parse(source: str) -> ast.Module | None:
         return None
 
 
+def _guard_deprecation(source: str, qualname: str, make: Callable[[], str | None]) -> str | None:
+    """Run ``make`` only where the importer can say "not deprecated" (no hidden marker).
+
+    Where it cannot (an unknown decorator, a warning elsewhere in the body) it states nothing,
+    so a false ``deprecated`` claim in the docs would not be reported on purpose, not by miss.
+    """
+    tree = _parse(source)
+    func = None if tree is None else m.find_function(tree, qualname)
+    return None if func is None or _deprecation(func) is not False else make()
+
+
 def _guard_kwargs(source: str, qualname: str, make: Callable[[], str | None]) -> str | None:
     """Run ``make`` only if no ``**kwargs`` could absorb a parameter that "went missing"."""
     tree = _parse(source)
@@ -369,16 +381,22 @@ def _git(repo: Path, *args: str, when: str | None = None) -> str:
 
 
 def _unprovable(inj: Injection) -> bool:
-    """Whether the projector is *meant* to stay silent about this injected type difference.
+    """Whether the projector is *meant* to stay silent about this injected difference.
 
-    A type disagreement it cannot prove (an unresolved name that may be an alias, or a bare
-    generic) is withheld on purpose (ADR-0007 Amendments 3 and 4). That is a deliberate
-    cost, not a failure, and the report keeps the two apart.
+    A type disagreement it cannot prove (an unresolved name that may be an alias, a bare
+    generic, a looser supertype) or a docs default behind a ``None`` sentinel is withheld on
+    purpose (ADR-0007 Amendments 3 to 5). That is a deliberate cost, not a failure, and the
+    report keeps the two apart.
     """
     aspect = (inj.expect_fact or "").partition("#")[2]
-    if not typecompare.is_type_aspect(aspect) or None in (inj.expect_code, inj.expect_docs):
+    if None in (inj.expect_code, inj.expect_docs):
         return False
-    return not typecompare.is_provable_difference(str(inj.expect_code), str(inj.expect_docs))
+    code, docs = str(inj.expect_code), str(inj.expect_docs)
+    if typecompare.is_default_aspect(aspect):
+        return typecompare.should_abstain_default(code, [docs])
+    if typecompare.is_type_aspect(aspect):
+        return not typecompare.is_provable_difference(code, docs)
+    return False
 
 
 def judge(inj: Injection, new: list[DriftItem]) -> Outcome:

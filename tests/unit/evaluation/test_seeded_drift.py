@@ -57,8 +57,18 @@ class TestJudge:
         inj = injection(expect_fact="py:m.f#param.x.type", expect_code="str", expect_docs="int")
         assert sd.judge(inj, []).verdict == "missed"
 
-    def test_a_default_is_never_abstained(self) -> None:
-        assert sd.judge(injection(expect_code="1", expect_docs="Style"), []).verdict == "missed"
+    def test_a_concrete_default_is_never_abstained(self) -> None:
+        inj = injection(expect_fact="py:m.f#param.x.default", expect_code="1", expect_docs="2")
+        assert sd.judge(inj, []).verdict == "missed"
+
+    def test_a_docs_default_changed_behind_a_none_code_default_is_abstained(self) -> None:
+        """A None default is a sentinel (ADR-0007 Amendment 5 D): withheld on purpose."""
+        inj = injection(expect_fact="py:m.f#param.x.default", expect_code="None", expect_docs="0")
+        assert sd.judge(inj, []).verdict == "abstained"
+
+    def test_a_code_default_changed_away_from_none_is_a_real_miss_if_not_found(self) -> None:
+        inj = injection(expect_fact="py:m.f#param.x.default", expect_code="0", expect_docs="None")
+        assert sd.judge(inj, []).verdict == "missed"
 
     def test_the_right_fact_with_the_wrong_values_is_not_counted_as_found(self) -> None:
         assert sd.judge(injection(), [item("9", "1")]).verdict == "found_wrong_values"
@@ -289,3 +299,23 @@ class TestOtherType:
         self, original: str, replacement: str
     ) -> None:
         assert sd._other_type(original) == replacement
+
+
+class TestDeprecationInjectionGuard:
+    DOC = '    """Doc.\n\n    Args:\n        a (int): A.\n    """\n'
+
+    def source(self, decorator: str = "") -> str:
+        return f"{decorator}def f(a: int = 1):\n{self.DOC}    return a\n"
+
+    def test_a_plain_function_can_be_given_a_false_deprecation_claim(self) -> None:
+        built = sd.build("docs_deprecated", candidate(), set(), 1)
+        assert built is not None and built.edit(self.source()) is not None
+
+    def test_a_function_with_an_unknown_decorator_is_skipped(self) -> None:
+        """The importer says nothing there, so the injection would be an unfair miss."""
+        built = sd.build("docs_deprecated", candidate(), set(), 1)
+        assert built is not None and built.edit(self.source("@mystery\n")) is None
+
+    def test_a_function_that_is_already_deprecated_is_skipped(self) -> None:
+        built = sd.build("docs_deprecated", candidate(), set(), 1)
+        assert built is not None and built.edit(self.source("@deprecated('x')\n")) is None

@@ -177,6 +177,38 @@ class TestGoogleStyle:
         source = f'def f(x):\n    """Doc.\n\n    Args:\n        {entry}\n    """\n'
         assert claims(source)[(F, "param.x.type")] == expected
 
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ("x (int): One. Defaults to None.", "None | int"),
+            ("x (int, default None): One.", "None | int"),
+            ("x (int, defaults None): One.", "None | int"),
+            ("x (str): One. Default is None.", "None | str"),
+            ("x (Optional[int]): One. Defaults to None.", "None | int"),
+            ("x (int, optional): One. Defaults to None.", "None | int"),
+            ("x (int): One. Defaults to 1.", "int"),
+            ("x (int, default 1): One.", "int"),
+            ("x (int): One.", "int"),
+        ],
+    )
+    def test_a_documented_default_of_none_allows_none(self, entry: str, expected: str) -> None:
+        source = f'def f(x):\n    """Doc.\n\n    Args:\n        {entry}\n    """\n'
+        assert claims(source)[(F, "param.x.type")] == expected
+
+    def test_numpy_default_none_is_read_the_same_way(self) -> None:
+        source = (
+            'def f(x, y):\n    """Doc.\n\n    Parameters\n    ----------\n'
+            "    x : int, default None\n        One.\n    y : int, default 2\n        Two.\n"
+            '    """\n'
+        )
+        facts = claims(source)
+        assert facts[(F, "param.x.type")] == "None | int"
+        assert facts[(F, "param.y.type")] == "int"
+
+    def test_a_default_of_none_with_no_type_invents_no_type(self) -> None:
+        source = 'def f(x):\n    """Doc.\n\n    Args:\n        x: One. Defaults to None.\n    """\n'
+        assert (F, "param.x.type") not in claims(source)
+
     def test_numpy_optional_is_read_the_same_way(self) -> None:
         source = (
             'def f(x, y):\n    """Doc.\n\n    Parameters\n    ----------\n'
@@ -362,6 +394,62 @@ class TestDeprecation:
         assert facts[(F, "deprecated")] == "true"
         assert facts[("py:pkg.mod.C", "deprecated")] == "true"
         assert facts[("py:pkg.mod.C.m", "deprecated")] == "true"
+
+    def test_a_directive_nested_in_a_parameter_deprecates_the_keyword_not_the_function(
+        self,
+    ) -> None:
+        source = (
+            'def f(copy=None):\n    """Do it.\n\n    Parameters\n    ----------\n'
+            "    copy : bool\n        Ignored.\n\n        .. deprecated:: 3.0.0\n"
+            '    """\n'
+        )
+        assert not [k for k in claims(source) if k[1] == "deprecated"]
+
+    def test_a_directive_nested_in_a_google_entry_is_the_same(self) -> None:
+        source = (
+            'def f(copy=None):\n    """Do it.\n\n    Args:\n'
+            "        copy: Ignored.\n            .. deprecated:: 3\n"
+            '    """\n'
+        )
+        assert not [k for k in claims(source) if k[1] == "deprecated"]
+
+    @pytest.mark.parametrize(
+        "note",
+        [
+            "This keyword is ignored and will be removed.",
+            "This parameter is ignored.",
+            "This argument no longer has an effect.",
+            "This option is ignored.",
+            "this KEYWORD is ignored",
+        ],
+    )
+    def test_a_directive_that_says_it_is_about_a_keyword_is_not_about_the_function(
+        self, note: str
+    ) -> None:
+        directive = f".. deprecated:: 3.0.0\n        {note}"
+        source = f'def f(copy=None):\n    """Assign.\n\n    {directive}\n    """\n'
+        assert not [k for k in claims(source) if k[1] == "deprecated"]
+
+    @pytest.mark.parametrize(
+        "note",
+        ["Use g instead.", "This function is replaced by g.", "This method will be removed."],
+    )
+    def test_a_top_level_directive_about_the_function_still_counts(self, note: str) -> None:
+        source = f'def f():\n    """Assign.\n\n    .. deprecated:: 3.0.0\n        {note}\n    """\n'
+        assert claims(source)[(F, "deprecated")] == "true"
+
+    def test_a_top_level_directive_with_no_text_still_counts(self) -> None:
+        source = 'def f():\n    """Assign.\n\n    .. deprecated:: 3.0.0\n    """\n'
+        assert claims(source)[(F, "deprecated")] == "true"
+
+    def test_one_directive_about_a_keyword_does_not_hide_one_about_the_function(self) -> None:
+        source = (
+            'def f(copy=None):\n    """Assign.\n\n    .. deprecated:: 3.0.0\n'
+            "        Use g.\n\n    Parameters\n    ----------\n    copy : bool\n"
+            "        Ignored.\n\n        .. deprecated:: 2.0\n"
+            '    """\n'
+        )
+        assert claims(source)[(F, "deprecated")] == "true"
 
     def test_no_directive_is_no_claim(self) -> None:
         assert not [k for k in claims('def f():\n    """Fine."""\n') if k[1] == "deprecated"]

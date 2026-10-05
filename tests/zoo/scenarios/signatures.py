@@ -513,11 +513,14 @@ def _typed_scenario(
     scenario_id: str,
     title: str,
     source: str,
-    expectations: tuple[tuple[str, str, Outcome, str, str, DriftClass | None, str], ...],
+    expectations: tuple[
+        tuple[str, str, Outcome, str | None, str | None, DriftClass | None, str], ...
+    ],
 ) -> Scenario:
     """One commit with one module, and L2 expectations ``(symbol tail, aspect, outcome,
     code value, doc value, drift class, note)``. For an ABSTAIN the code value is the one the
-    importer states and the projector withholds."""
+    importer states and the projector withholds (``None`` if it states nothing). A ``None`` doc
+    value means the docstring makes no claim on the slot."""
     return Scenario(
         id=scenario_id,
         title=title,
@@ -534,7 +537,7 @@ def _typed_scenario(
                 "c1", sym(scenario_id, tail), aspect, Layer.L2, outcome,
                 code_value=None if outcome is Outcome.ABSTAIN else code,
                 withheld_value=code if outcome is Outcome.ABSTAIN else None,
-                claims=((_TS, doc),), drift_class=drift, note=note,
+                claims=((_TS, doc),) if doc is not None else (), drift_class=drift, note=note,
             )
             for tail, aspect, outcome, code, doc, drift, note in expectations
         ),
@@ -691,6 +694,154 @@ DEFAULT_FORMS = _typed_scenario(
 )  # fmt: skip
 
 
+PROPERTY_PARAMS = _typed_scenario(
+    "property_params",
+    "A property's docstring documents how to call the object it returns",
+    '''
+    from functools import cached_property
+
+    class Graph:
+        @cached_property
+        def edges(self):
+            """A view of the edges.
+
+            Args:
+                nbunch (list): The nodes to report on.
+                data (bool): Include the attributes.
+            """
+
+        def degree(self, node):
+            """Degree of a node.
+
+            Args:
+                nobody (int): This parameter does not exist.
+            """
+    ''',
+    (
+        ("m.Graph.edges", "param.nbunch.exists", Outcome.ABSTAIN, None, "true", None,
+         "A property is accessed, not called; its parameters describe the returned view."),
+        ("m.Graph.degree", "param.nobody.exists", Outcome.CONTRADICT, "false", "true",
+         DriftClass.DOC_VS_CODE, "A real method documenting a parameter it lacks is still drift."),
+    ),
+)  # fmt: skip
+
+DEPRECATION_READ = _typed_scenario(
+    "deprecation_read",
+    "Deprecation is read where it really is: top-level directives and warnings that say so",
+    '''
+    def reindex(labels, copy=None):
+        """Conform to new labels.
+
+        Args:
+            copy (bool): Ignored.
+
+                .. deprecated:: 3.0.0
+        """
+
+    def old(x):
+        """Old.
+
+        .. deprecated:: 3.6
+            Use new.
+        """
+        import warnings
+        warnings.warn("old is deprecated, use new", PackageWarning, stacklevel=2)
+        return x
+
+    @mystery
+    def hidden(x):
+        """Hidden.
+
+        .. deprecated:: 3.6
+        """
+
+    def fresh(x):
+        """Fresh.
+
+        .. deprecated:: 3.6
+            Use other.
+        """
+        return x
+    ''',
+    (
+        ("m.reindex", "deprecated", Outcome.UNDOCUMENTED, "false", None, None,
+         "The directive deprecates the `copy` keyword, not the function."),
+        ("m.old", "deprecated", Outcome.CORROBORATE, "true", "true", None,
+         "A leading warning after an import, with a custom category, says it is deprecated."),
+        ("m.hidden", "deprecated", Outcome.ABSTAIN, None, "true", None,
+         "An unknown decorator may be the thing that deprecates it: no claim either way."),
+        ("m.fresh", "deprecated", Outcome.CONTRADICT, "false", "true", DriftClass.DOC_VS_CODE,
+         "Documented as deprecated, with nothing in the code that could be hiding a marker."),
+    ),
+)  # fmt: skip
+
+DEFAULT_NONE_ALLOWS_NONE = _typed_scenario(
+    "default_none_allows_none",
+    "A documented `default None` says None is allowed, as `optional` does",
+    '''
+    def run(count: int | None = None, name: str | None = None) -> None:
+        """Run.
+
+        Args:
+            count (int, default None): How many.
+            name (str): What to call it.
+        """
+    ''',
+    (
+        ("m.run", "param.count.type", Outcome.CORROBORATE, "None | int", "None | int", None,
+         "`default None` allows None, so the docs agree with the annotation."),
+        ("m.run", "param.name.type", Outcome.CONTRADICT,
+         "None | str", "str", DriftClass.DOC_VS_CODE,
+         "Neither optional nor a None default: the docs omit a None the code allows (PRD §14#10)."),
+    ),
+)  # fmt: skip
+
+TYPE_LOOSER_DOCS = _typed_scenario(
+    "type_looser_docs",
+    "Docs name a supertype of the annotation, and one names a subtype",
+    '''
+    from typing import Hashable, Sequence
+
+    def f(key: Hashable, items: list[str], rows: Sequence[str]) -> None:
+        """F.
+
+        Args:
+            key (object): The key.
+            items (Sequence[str]): The items.
+            rows (list): The rows.
+        """
+    ''',
+    (
+        ("m.f", "param.key.type", Outcome.ABSTAIN, "Hashable", "object", None,
+         "object is a supertype of Hashable: less specific, not wrong."),
+        ("m.f", "param.items.type", Outcome.ABSTAIN, "list[str]", "Sequence[str]", None,
+         "Sequence[str] is a supertype of list[str]."),
+        ("m.f", "param.rows.type", Outcome.CONTRADICT, "Sequence[str]", "list",
+         DriftClass.DOC_VS_CODE, "The docs promise a list; the code accepts any sequence."),
+    ),
+)  # fmt: skip
+
+DEFAULT_SENTINEL = _typed_scenario(
+    "default_sentinel",
+    "A None default behind a documented effective default, and a real default mismatch",
+    '''
+    def query(engine=None, axis=0) -> None:
+        """Query.
+
+        Args:
+            engine (str): The engine. Defaults to 'numexpr'.
+            axis (int): The axis. Defaults to None.
+        """
+    ''',
+    (
+        ("m.query", "param.engine.default", Outcome.ABSTAIN, "None", "'numexpr'", None,
+         "None as a default usually means computed or unset: the effective default is not wrong."),
+        ("m.query", "param.axis.default", Outcome.CONTRADICT, "0", "None", DriftClass.DOC_VS_CODE,
+         "A concrete code default against a different documented one is real drift."),
+    ),
+)  # fmt: skip
+
+
 SCENARIOS: tuple[Scenario, ...] = (
     SIG_CHANGE_DOCS_UPDATED,
     SIG_CHANGE_DOCS_STALE,
@@ -705,6 +856,11 @@ SCENARIOS: tuple[Scenario, ...] = (
     TYPE_LITERAL_ABSTAINS,
     TYPE_RESOLVED_DISAGREEMENT,
     DEFAULT_FORMS,
+    PROPERTY_PARAMS,
+    DEPRECATION_READ,
+    DEFAULT_NONE_ALLOWS_NONE,
+    TYPE_LOOSER_DOCS,
+    DEFAULT_SENTINEL,
     REQUIRES_PYTHON_BUMP,
     DRIFT_PERSISTS,
 )

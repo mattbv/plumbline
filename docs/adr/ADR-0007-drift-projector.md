@@ -480,6 +480,20 @@ Each change withholds a report the tool previously made, so recall on drift of t
 by design. The injected-drift evaluation reports what is withheld separately from what is missed,
 and will be re-run with a category for each.
 
+### What implementing it showed
+
+- **Looser docs and an omitted `None` interact.** The bare-generic rule (Amendment 3 C) used to
+  abstain first; the looser-docs rule now runs first and still reports an omitted `None`, as C says.
+  Three findings that were silent are now reported: `dict[...] | None` in the code against a bare
+  `dict` in the docs. They are PRD §14 #10 cases.
+- **The fixes did not generalize.** On three packages the rules had never seen, 17 of 22 findings
+  were false, from three causes this amendment does not cover: a signature with `*args` (a
+  documented name may be what it receives, as `**kwargs` already makes a missing keyword
+  unprovable), deprecation through a helper whose name says so but is not `warn`, a `.. deprecated::`
+  note that begins "The *x* parameter", and a docstring template placeholder. They need their own
+  amendment and a fresh set of packages. See
+  [the report](../precision-on-three-packages.md).
+
 ### How it will be verified
 
 1. Unit and property tests per rule, and a zoo scenario per cause, each run through the real

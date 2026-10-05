@@ -106,6 +106,14 @@ class Projector:
                     ] + changes.asserting.get(fact_key, [])
                     if typecompare.should_abstain(claim.raw_value, stated):
                         claim = None  # a difference we cannot prove is not drift (ADR-0007 A3/A4)
+                if claim is not None and typecompare.is_default_aspect(aspect):
+                    stated = [
+                        c.value
+                        for c in present
+                        if c.author != PROJECTOR_PRINCIPAL and c.claim_id not in changes.retracting
+                    ] + changes.asserting.get(fact_key, [])
+                    if typecompare.should_abstain_default(claim.raw_value, stated):
+                        claim = None  # a None default is a sentinel (ADR-0007 Amendment 5 D)
                 if claim is None:
                     abstained += 1
                 else:

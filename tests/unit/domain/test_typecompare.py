@@ -20,7 +20,7 @@ class TestWhatIsReported:
         ("code", "doc"),
         [
             ("int", "str"),
-            ("list[int]", "Iterable[int]"),
+            ("list[int]", "list[str]"),
             ("Iterable[int]", "List[int]"),
             ("dict[str, int]", "dict[int, str]"),
             ("int | str", "int | bytes"),
@@ -147,6 +147,90 @@ class TestWhatIsLeftAlone:
 
     def test_text_that_is_not_a_type_abstains(self) -> None:
         assert not typecompare.is_provable_difference("the next release", "int")
+
+
+class TestDocsThatAreLooserThanTheCode:
+    """Documenting a supertype is less specific, not wrong (ADR-0007 Amendment 5 C)."""
+
+    @pytest.mark.parametrize(
+        ("code", "doc"),
+        [
+            ("Any", "object"),
+            ("object", "Any"),
+            ("object", "Any | None"),
+            ("Hashable", "object"),
+            ("Hashable", "None | object"),
+            ("list[str]", "Sequence[str]"),
+            ("list", "Sequence"),
+            ("tuple[int, ...]", "Sequence[int]"),
+            ("dict[str, int]", "Mapping[str, int]"),
+            ("set[int]", "AbstractSet[int]"),
+            ("list[int]", "Iterable[int]"),
+            ("Sequence[int]", "Iterable[int]"),
+            ("int", "float"),
+            ("bool", "int"),
+            ("int", "object"),
+            ("str", "Any"),
+            ("list[int] | tuple[int, ...]", "Sequence[int]"),
+        ],
+    )
+    def test_a_supertype_in_the_docs_abstains(self, code: str, doc: str) -> None:
+        assert not provable(code, doc)
+
+    @pytest.mark.parametrize(
+        ("code", "doc"),
+        [
+            ("Sequence[Hashable]", "list"),  # docs narrower than the code accepts
+            ("Iterable[int]", "list[int]"),
+            ("Hashable", "str"),
+            ("float", "int"),
+            ("Mapping[str, int]", "dict[str, int]"),
+            ("list[str]", "Sequence[int]"),  # a supertype, but of something else
+            ("list[str]", "Iterable[bytes]"),
+            ("int", "Sequence[int]"),  # not a supertype of int
+            ("str", "Mapping"),
+        ],
+    )
+    def test_docs_that_are_narrower_or_unrelated_are_still_reported(
+        self, code: str, doc: str
+    ) -> None:
+        assert provable(code, doc)
+
+    def test_docs_covering_only_part_of_a_union_in_the_code_are_still_reported(self) -> None:
+        assert provable("list[int] | int", "Sequence[int]")
+
+    def test_looser_docs_that_omit_none_the_code_allows_are_still_reported(self) -> None:
+        """PRD §14 #10 still holds: `Sequence[str]` says nothing about None."""
+        assert provable("list[str] | None", "Sequence[str]")
+
+    def test_a_top_type_in_the_docs_already_covers_none(self) -> None:
+        assert not provable("str | None", "object")
+        assert not provable("str | None", "Any")
+
+
+class TestSentinelDefaults:
+    """A code default of None is a sentinel: the docs' effective default is not provably wrong."""
+
+    def test_a_documented_concrete_default_behind_a_none_sentinel_abstains(self) -> None:
+        assert typecompare.should_abstain_default("None", ["'numexpr'"])
+        assert typecompare.should_abstain_default("None", ["True", "0"])
+
+    def test_agreement_does_not_abstain(self) -> None:
+        assert not typecompare.should_abstain_default("None", ["None"])
+        assert not typecompare.should_abstain_default("30", ["30"])
+
+    def test_a_concrete_code_default_against_a_different_one_is_reported(self) -> None:
+        assert not typecompare.should_abstain_default("0", ["None"])
+        assert not typecompare.should_abstain_default("30", ["60"])
+
+    def test_no_documentation_means_nothing_to_abstain_about(self) -> None:
+        assert not typecompare.should_abstain_default("None", [])
+
+    def test_only_the_default_slots_are_defaults(self) -> None:
+        assert typecompare.is_default_aspect("param.x.default")
+        assert not typecompare.is_default_aspect("param.x.type")
+        assert not typecompare.is_default_aspect("returns.type")
+        assert not typecompare.is_default_aspect("param.x.exists")
 
 
 class TestAbstentionAcrossSeveralDocClaims:
