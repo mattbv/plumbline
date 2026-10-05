@@ -67,7 +67,8 @@ _SPHINX_FIELD = re.compile(
     r"^:(?P<field>param|parameter|arg|argument|type|returns?|rtype|raises?|raise|except)\b"
     r"(?P<rest>[^:]*):\s*(?P<text>.*)$"
 )
-_DEPRECATED = re.compile(r"^\s*\.\.\s+deprecated::", re.MULTILINE)
+_DIRECTIVE = re.compile(r"^\.\.\s+deprecated::")
+_KEYWORD_NOTE = re.compile(r"^this\s+(?:keyword|parameter|argument|option)\b", re.IGNORECASE)
 _DEFAULT = re.compile(
     # A `default` touching a quotation mark is a value ("default", "left"), not the keyword.
     r"(?<![\"'`])\bdefaults?\b(?![\"'`])\s*(?:to|is|=|:)?\s*"
@@ -312,6 +313,24 @@ def _sphinx(lines: list[str], facts: _DocFacts) -> None:
             facts.raises.append((rest, "docstring.sphinx:raises"))
 
 
+def _deprecates_the_symbol(docstring: str) -> bool:
+    """Whether a ``.. deprecated::`` directive is about the symbol itself (ADR-0007 Amendment 5).
+
+    It must be at the docstring's top level: indented inside a parameter or any other block it
+    deprecates that keyword. One that begins "This keyword/parameter/argument/option" at the
+    top level is also about a keyword. Ignoring a directive can only remove a claim.
+    """
+    lines = docstring.splitlines()
+    for i, line in enumerate(lines):
+        if not _DIRECTIVE.match(line):
+            continue
+        note = next((ln.strip() for ln in lines[i + 1 :] if ln.strip()), "")
+        indented = i + 1 < len(lines) and lines[i + 1].startswith((" ", "\t")) and note
+        if not (indented and _KEYWORD_NOTE.match(note)):
+            return True
+    return False
+
+
 def _parse(docstring: str) -> _DocFacts:
     """Parse a docstring in any supported style into the facts it states."""
     facts = _DocFacts()
@@ -319,7 +338,7 @@ def _parse(docstring: str) -> _DocFacts:
     _google(lines, facts)
     _numpy(lines, facts)
     _sphinx(lines, facts)
-    facts.deprecated = bool(_DEPRECATED.search(docstring))
+    facts.deprecated = _deprecates_the_symbol(docstring)
     return facts
 
 
@@ -438,7 +457,11 @@ class DocstringClaimImporter:
             add(f"param.{param.name}.exists", "true", _STRUCTURED, param.rule)
             if param.type_text is not None:
                 type_value = src.annotation_from_text(param.type_text)
-                if type_value is not None and param.optional:
+                allows_none = param.optional or (
+                    param.default_text is not None
+                    and canonical.canonical_literal(param.default_text) == "None"
+                )
+                if type_value is not None and allows_none:
                     type_value = canonical.canonical_type_annotation(f"{type_value} | None")
                 if type_value is not None:
                     add(f"param.{param.name}.type", type_value, _STRUCTURED, param.rule)
