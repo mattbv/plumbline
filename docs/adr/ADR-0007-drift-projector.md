@@ -403,7 +403,10 @@ case. That is the abstention-first rule, and it is the smaller loss.
   package whose docstrings state types, more than half of the injected type drift was
   withheld this way, and every one of those was a difference the rule calls unprovable. See
   [the evaluation](../seeded-drift-evaluation.md).
-- **A `Literal[...]` of strings documented as `str` is still reported.** It is a correct,
-  looser doc and should abstain; left for a follow-up.
+- **A `Literal[...]` documented as its value type was reported, and now abstains.** It is a
+  correct, looser doc. A difference is not provable when one side is only `Literal` values of
+  types the other side names (`Literal['r', 'rb']` against `str`, `Literal['a', 1]` against
+  `int | str`). A `Literal[1, 2]` documented as `str` is still reported, because the values are
+  not strings.
 - **Names that are classes of the repository could be resolved,** which would recover most of
   the withheld drift. That needs import resolution (PRD ING-6), and is not decided here.

@@ -9,7 +9,7 @@ project actually is against that plan, updated as work lands.
 | Milestone | Exit criteria | Status |
 |---|---|---|
 | **M0 — Foundations** | Drift zoo ingestion is deterministic across two runs; every seeded scenario's routing outcome is asserted by tests | **Met, with one caveat.** Two ingestions of the zoo give byte-identical knowledge-base snapshots, and every labeled routing outcome is checked end to end against a real Ontolith KB. The caveat: README, docs and CHANGELOG claims come from label-driven stand-ins (`tests/zoo/standins.py`), because those importers do not exist yet. The zoo is still short of the PRD's ~80 scenarios. |
-| **M1 — Drift Radar** (0.1) | Drift-zoo precision ≥95% / recall ≥90%; ≥90% precision on a hand-labeled sample from 3 real repos | **In progress; real-code precision measured on one repo.** Done: code importer (ING-1), docstring importer (part of ING-2), the drift projector (DRF-1 to 4), `plumb ingest` and `plumb drift`, a Git reader, [a seeded-drift measurement](seeded-drift-evaluation.md), and a type comparison that abstains when it cannot prove a difference (ADR-0007 Amendments 3 and 4). On `rich`, findings on the unmodified package fell from 228 to 51, of which I read 2 as false positives; recall on provable injected drift is 100%, with more than half of the injected type drift withheld on purpose. Two more repositories and a second reader are needed before the criterion is called met. |
+| **M1 — Drift Radar** (0.1) | Drift-zoo precision ≥95% / recall ≥90%; ≥90% precision on a hand-labeled sample from 3 real repos | **In progress; real-code precision measured on one repo.** Done: code importer (ING-1), docstring importer (part of ING-2), the drift projector (DRF-1 to 4), `plumb ingest` and `plumb drift`, a Git reader, [a seeded-drift measurement](seeded-drift-evaluation.md), and a type comparison that abstains when it cannot prove a difference (ADR-0007 Amendments 3 and 4). On `rich`, findings on the unmodified package fell from 228 to 49, none of which I read as a false positive; recall on provable injected drift is 100%, with more than half of the injected type drift withheld on purpose. Two more repositories and a second reader are needed before the criterion is called met. |
 | **M2 — Reconcile** (0.2) | Full J2 → J3 → merge → corroboration loop on a real repo with a real agent; zero direct-write paths proven by a closed-set test | Not started. Deferral under dispute and the retract-then-assert protocol (ADR-0006, ADR-0007) are the groundwork. |
 | **M3 — Publish & Harden** (1.0) | All P0 requirements met; budgets green; no open high-severity security findings; 5 production design partners | Not started |
 
@@ -31,9 +31,9 @@ project actually is against that plan, updated as work lands.
 
 In order:
 
-1. **Finish precision on real code:** let a `Literal[...]` of strings documented as `str` abstain,
-   then label a second and third repository with a second reader
-   ([seeded-drift-evaluation.md](seeded-drift-evaluation.md)).
+1. **Finish precision on real code:** label a second and third repository with a second reader
+   ([seeded-drift-evaluation.md](seeded-drift-evaluation.md)). One package and one reader cannot
+   establish the criterion.
 2. **README, docs-page and CHANGELOG importers**, with the symbol resolver they need
    (PRD ING-6, including an `alias_of` for re-exports). Until then only docstring drift is found.
 3. **The remaining fact producers:** `cli.*`, `env.*` and `project.*` importers, and the lineage

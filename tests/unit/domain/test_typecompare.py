@@ -110,6 +110,41 @@ class TestWhatIsLeftAlone:
         assert not provable("list[int | Style]", "list[int | str]")
         assert not provable("Callable[[Style], int]", "Callable[[str], int]")
 
+    @pytest.mark.parametrize(
+        ("code", "doc"),
+        [
+            ("Literal['r'] | Literal['rb'] | Literal['rt']", "str"),
+            ("Literal['left', 'right']", "str"),
+            ("str", "Literal['a', 'b']"),
+            ("Literal[1, 2]", "int"),
+            ("Literal[b'x']", "bytes"),
+            ("Literal[True]", "bool"),
+            ("Literal['a', 1]", "int | str"),
+            ("None | Literal['a']", "None | str"),
+        ],
+    )
+    def test_a_literal_documented_as_its_value_type_abstains(self, code: str, doc: str) -> None:
+        """A correct, looser doc: `Literal['a', 'b']` is a `str`."""
+        assert not provable(code, doc)
+
+    @pytest.mark.parametrize(
+        ("code", "doc"),
+        [
+            ("Literal['a', 'b']", "int"),
+            ("Literal[1, 2]", "str"),
+            ("Literal['a', 1]", "str"),  # the int values are not covered
+            ("Literal['a'] | int", "str"),  # a second member the docs do not mention
+            ("Literal['a']", "Literal['b']"),
+            ("Literal[Color.RED]", "str"),  # a value of unknown type
+            ("Literal['a', None]", "str"),  # a None value is not a str
+            ("Literal[1.5]", "int"),  # a value of a type this rule does not read
+        ],
+    )
+    def test_a_literal_against_a_type_that_does_not_cover_it_is_still_reported(
+        self, code: str, doc: str
+    ) -> None:
+        assert provable(code, doc)
+
     def test_text_that_is_not_a_type_abstains(self) -> None:
         assert not typecompare.is_provable_difference("the next release", "int")
 

@@ -104,7 +104,8 @@ over-escaping, which is real but cosmetic.
 
 The comparison was changed as those amendments describe, and the measurement was re-run.
 
-**The same unmodified `rich` copy went from 228 open contradictions to 51.** I read all 51:
+**The same unmodified `rich` copy went from 228 open contradictions to 51, and then to 49** (see
+the end of this section for the last step). I read all 51:
 
 | What | Count | Reading |
 |---|---|---|
@@ -112,8 +113,11 @@ The comparison was changed as those amendments describe, and the measurement was
 | Default disagreements | 22 | all genuine disagreements between docs and signature; 8 are the cosmetic over-escaped newline. The three false ones (the quoted word *default* twice, and `100` against `100.0`) are the three that went |
 | Type disagreements | 17 | 12 are the docs omitting `None` (PRD §14 #10, reported by design); 3 are real narrowing (`Iterable[int]` documented as `list[int]`, a union missing `str`); **2 are false positives** |
 
-As I read them, **2 of 51 are false positives**, both a `Literal['r'] | Literal['rb']` annotation
-documented as `str`, which is a correct, looser doc. The 12 "docs omit `None`" findings are
+As I read them, **2 of 51 were false positives**, both a `Literal['r'] | Literal['rb']` annotation
+documented as `str`, which is a correct, looser doc. A follow-up made a `Literal` of values whose
+types the other side names abstain; the two went, the count became 49, and nothing else moved
+(`exists` 12 and defaults 22 unchanged, recall and withheld counts identical). So **as I read
+them, none of the 49 is a false positive**. The 12 "docs omit `None`" findings are
 counted as true because that is the PRD's own definition of drift for them, and a team that
 disagrees is meant to waive them (waivers are not built yet). The labels are mine, from one
 reader and one package.
@@ -145,8 +149,6 @@ up as a miss, and each was checked by reading the source before being called a h
 
 ## What remains
 
-- A `Literal[...]` of strings documented as `str` is still reported. It is a correct, looser doc
-  and should abstain too.
 - The cost above could be cut by knowing which names are classes. The KB already holds the
   classes of the repository as symbols; resolving an annotation name to one needs import
   resolution (PRD ING-6). Until then, the safe behaviour is silence.
