@@ -410,3 +410,83 @@ case. That is the abstention-first rule, and it is the smaller loss.
   not strings.
 - **Names that are classes of the repository could be resolved,** which would recover most of
   the withheld drift. That needs import resolution (PRD ING-6), and is not decided here.
+
+## Amendment 5: what three further packages showed about precision (proposed)
+
+[The measurement](../precision-on-three-packages.md) read 317 findings on three packages the
+tool had never seen; 180 were false positives, from four systematic causes. Amendments 3 and 4
+fixed the cause that dominated on the one package they were tuned on. This records the rules
+for the rest, and one decision that is a policy choice, made by the maintainer.
+
+(Properties and the code-side half of deprecation are ADR-0004 Amendment 3.)
+
+### A. A deprecation directive deprecates the symbol only at its top level
+
+The docstring importer reads `.. deprecated::` anywhere as "this symbol is deprecated". In the
+packages measured, 28 findings came from a directive **nested in a parameter's description**,
+where it deprecates that keyword, or from one that says "This keyword is ignored".
+
+A directive counts only if it is at the docstring's base indentation (the indentation of its
+summary and sections, not inside an indented parameter or block), **and** its first sentence
+does not begin "This keyword", "This parameter", "This argument" or "This option". Anything
+else is ignored, which can only remove a claim.
+
+### B. A documented `default None` allows `None`
+
+Amendment 4 reads a documented `optional` as allowing `None`. A documented default of `None` says
+the same thing, and numpydoc writes it more often than `optional` (`min_periods : int, default
+None`). The docstring importer adds `None` to a parameter's type claim when the entry's stated
+default is `None`, exactly as it does for `optional`. The projector's rule is unchanged: docs that
+allow `None` where the code does not abstain; docs that omit it where the code allows it are still
+reported (PRD §14 #10), and a docstring that says neither `optional` nor `default None` is that
+case.
+
+### C. Docs that are looser than the code do not differ provably
+
+If, for every member that differs, the docs name a supertype of the code's member, the difference
+is not provable. A small fixed table of the relations between resolved names is used (never read
+from the interpreter):
+
+- `object` and `Any` are the top types, equal to each other and a supertype of every resolved
+  name, including `Hashable`;
+- `list`, `tuple` and `str` are `Sequence`; `Sequence`, `set`, `frozenset` and `dict` are
+  `Collection`; `Collection` is `Iterable`; `dict` is `Mapping`; `set` and `frozenset` are
+  `AbstractSet`.
+
+A supertype is compared by its head, and only where the arguments are equal or the docs are bare
+(`list[str]` documented as `Sequence[str]`). The reverse, docs *narrower* than the code (`Sequence`
+in the code, `list` in the docs; `Hashable` against `str`), is still reported: the docs promise
+less than the code accepts, which is a real if small imprecision.
+
+### D. A `None` default is a sentinel (decided by the maintainer)
+
+When the **code's** default is `None` and a doc claim states a concrete, different default, the
+projector does not state the code's default. `None` as a default usually means "computed or
+unset", so the docs' effective default (`engine=None` documented as `default 'numexpr'`) is not
+provably wrong. In the packages measured this was 43 findings, a policy question and not an error
+the tool made.
+
+Unchanged: a concrete code default against a different concrete documented default (`axis=0`
+against docs saying `None`) is reported, and so are docs that say `None` where the code has a
+value.
+
+*Cost.* A docs default that really is stale behind a `None` sentinel is no longer reported.
+Waivers (DRF-7) would have been the way for a team to silence these one at a time; this removes
+the need for the common case at the price of that recall.
+
+### What the changes cost, together
+
+Each change withholds a report the tool previously made, so recall on drift of those kinds falls
+by design. The injected-drift evaluation reports what is withheld separately from what is missed,
+and will be re-run with a category for each.
+
+### How it will be verified
+
+1. Unit and property tests per rule, and a zoo scenario per cause, each run through the real
+   importers, projector and Ontolith routing.
+2. The measurement on the same three packages and on `rich`, repeated, with the numbers set beside
+   the ones in the report. A finding that was REAL must not disappear unless it falls under a
+   rule above, and any that does is listed.
+3. The seeded-drift evaluation re-run: recall on provable drift must not fall, and the withheld
+   count is reported.
+4. A second reader labelling a sample of what remains, because every label so far is mine.

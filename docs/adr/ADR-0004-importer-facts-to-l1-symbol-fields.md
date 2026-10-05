@@ -168,3 +168,52 @@ fields are `signature_json`, `is_deprecated` and `namespace_closed`; `kind`, `pr
 `defined_at` are always stated. This also supersedes ADR-0005's sentence that an
 `ambiguous` symbol's detail facts "stay at their last values": they are withdrawn too, and
 return when the name is unambiguous again.
+
+## Amendment 3: what the code importer states about properties and deprecation (proposed)
+
+[Reading three further packages](../precision-on-three-packages.md) showed two things the code
+importer states that it cannot prove. Both produce false reports, and both are about a symbol
+whose callable shape or deprecation lives somewhere a single-file reading does not look.
+
+### A. A property has no signature
+
+A property (`@property`, `@cached_property`, and the `.getter`, `.setter`, `.deleter` forms) is
+accessed, not called. Its docstring often documents how to call the *object it returns*:
+`networkx.Graph.edges` is a `@cached_property` returning a view, and its docstring documents
+`edges(nbunch=None, data=False, default=None)`. Stating the property's own signature as
+`(self)` makes every one of those documented parameters look missing.
+
+For a property the importer states **no `signature_json`**. It still states `present`, `kind`,
+and `is_deprecated`. Every `param.*` and `returns.type` slot on it then abstains, by the rule that
+already exists for a symbol with no signature facts (ADR-0007 §2).
+
+This supersedes the part of ADR-0007 §5 that lists `property` and `cached_property` among the
+decorators that leave a signature as written: they do, but the signature is not what the
+docstring describes.
+
+*Cost.* A parameter documented on a property that really does not exist, and a type drift on a
+property's value, are no longer reported. Both are rare next to the case this removes.
+
+### B. Deprecation: generous about `true`, strict about `false`
+
+The two directions are not symmetric. A docstring only ever *claims* deprecation, never its
+absence, so a wrong `is_deprecated = true` cannot open a dispute, while a wrong `false` does.
+The rules follow that.
+
+**`is_deprecated = true`** when any of these holds:
+- a `@deprecated` decorator (as before);
+- a call to `warn` that is a leading statement of the body, where *leading* skips the docstring
+  and import statements, **and** either its category is `DeprecationWarning` or
+  `PendingDeprecationWarning`, or its message contains "deprecated" (case-insensitive) and its
+  category is any name ending in `Warning`. This covers a warning that follows `import warnings`
+  (the importer only looked at the first statement) and a project's own subclass such as
+  `Pandas4Warning` (it only matched the literal name).
+
+**`is_deprecated = false`** only when it is provable that no marker is hiding: no decorator
+outside the known list (an unknown decorator may be doing the deprecating), and no `warn` call
+anywhere in the body whose message mentions deprecation. Otherwise the field is **not stated**,
+and the slot abstains. (ADR-0004 Amendment 2 already withdraws an optional field the importer
+stops stating.)
+
+*Cost.* A function the docs call deprecated, which carries an unknown decorator and no visible
+marker, is no longer reported as "the code says it is not". We cannot tell.
