@@ -61,10 +61,15 @@ findings in `networkx` is on a property.
 - *The docstring importer* takes a `.. deprecated::` directive anywhere in the docstring as
   deprecating the function. In `pandas` 28 are indented inside a parameter's description
   (deprecating that keyword), or say "This keyword is ignored" (`Series.set_axis`).
-- *The code importer* only recognizes decorators. Eleven functions (8 in `pandas`, 3 in
-  `networkx`) emit a deprecation warning from the body, so the code is deprecated and the tool
-  states that it is not. `networkx.metric_closure` also carries decorators the importer does not
-  know, so it should not have claimed "not deprecated" at all.
+- *The code importer* recognizes a `@deprecated` decorator, or a `DeprecationWarning` call as the
+  **first** statement of the body. Eleven functions (8 in `pandas`, 3 in `networkx`) warn that
+  they are deprecated and are missed, so the code is deprecated and the tool states that it is
+  not. The causes I confirmed: in `networkx` the warning is the second statement, after
+  `import warnings`; in `pandas` the warning is first, but its category is `Pandas4Warning`, a
+  custom subclass, and only the literal name `DeprecationWarning` is matched. I confirmed these
+  on `metric_closure` and `is_categorical_dtype`, and did not check each of the other nine.
+  `networkx.metric_closure` also carries decorators the importer does not know, so it should not
+  have claimed "not deprecated" at all.
 
 **3. A documented `default None` allows `None` (at least 87, `pandas`).** Amendment 4 reads
 `optional` as allowing `None`; `pandas` writes `min_periods : int, default None`, which says
@@ -112,9 +117,9 @@ Each cause above is a defect in what the importers read or what the projector cl
 has the same shape as the earlier fixes: the tool stated something it could not prove.
 
 1. Do not state a signature for a property; its documented parameters describe its result.
-2. Read a deprecation directive only at function level and not as a keyword's note, and
-   recognize a body that warns of its own deprecation; abstain on `false` where an unknown
-   decorator could be doing it.
+2. Read a deprecation directive only at function level and not as a keyword's note; recognize a
+   deprecation warning that is not the first statement or uses a custom category; abstain on
+   `false` where an unknown decorator could be doing it.
 3. Read a documented `default None` as allowing `None`, as `optional` is.
 4. Treat a documented supertype (`object` for `Any`, `Sequence` for `list`) as not provably
    different.
