@@ -128,3 +128,83 @@ has the same shape as the earlier fixes: the tool stated something it could not 
 Items 1 to 4 each change what the importers or projector claim, so each needs an ADR amendment
 before code. This should be repeated on these same three packages after the fixes, and the
 numbers compared with the ones here.
+
+## After the fixes (ADR-0004 Amendment 3 and ADR-0007 Amendment 5)
+
+The rules in those amendments were implemented and the measurement repeated. Two things are
+reported separately because they mean different things.
+
+### On the same three packages: 317 findings became 93
+
+| Package | Before | After | What went |
+|---|---|---|---|
+| `boltons` | 3 | 1 | 2 sentinel defaults |
+| `networkx` | 43 | 0 | 39 property parameters, 3 deprecations, 1 sentinel default |
+| `pandas` | 271 | 92 | 36 deprecations, 40 sentinel defaults, 106 type findings (documented `default None`, looser docs) |
+
+No finding I had labelled REAL among the `exists` and concrete-default findings disappeared (24
+and 8 in `pandas`; the one in `boltons`). Of the type findings I had counted as true, four went,
+and they are cases of a documented `default None` that my earlier check missed because the docs
+write "defaults None"; so those were mislabelled, not lost. Three type findings appeared that
+were not reported before: `dict[...] | None` in the code against a bare `dict` in the docs with
+no `optional` or default stated. They are PRD §14 #10 cases. The bare-generic rule used to
+abstain on them first; the looser-docs rule now runs first and, as Amendment 5 C says, still
+reports an omitted `None`. That interaction was not spelled out in the amendment.
+
+**This is an in-sample number.** Every rule was designed from these three packages, so "93
+findings, all of which I read as true" says the rules do what they were written to do, and
+nothing about packages they were not written for. That is the mistake `rich` made.
+
+On `rich`, findings went from 49 to 39 (six sentinel defaults and four documented `default
+None`; three of the four I confirmed in the docstring text, the fourth continues on a later line).
+
+### On three packages the rules never saw: 22 findings, 17 false
+
+`matplotlib`, `scikit_learn` and `scipy`, taken untouched. I read all 22.
+
+| Package | Findings | False | Real | Arguable |
+|---|---|---|---|---|
+| `matplotlib` | 21 | 17 | 2 | 2 |
+| `scikit_learn` | 1 | 0 | 1 | 0 |
+| `scipy` | 0 | 0 | 0 | 0 |
+
+That is 17 of 22 false (77%), with 3 real and 2 arguable (a colour written `'k'` in the code and
+`'black'` in the docs; a default documented as an `rcParam`). A sample this small and dominated
+by one cause is a weak estimate, but it is the honest one: **the fixes did not generalize.**
+
+`scikit_learn` and `scipy` give almost nothing because their documented types are prose
+(`array-like of shape (n_samples,)`), which the importer correctly refuses to treat as types, and
+their code is mostly unannotated. Zero findings there is not evidence of precision.
+
+Three new causes, each from a different mechanism:
+
+1. **A signature with `*args` (14).** `pts_to_midstep(x, *args)` documents `y1` and `yp`;
+   `Bbox.from_extents(*args)` documents `left`, `bottom`, `right`, `top`. The documented names
+   are what `*args` receives, so their absence is not provable, exactly as `**kwargs` makes a
+   missing keyword unprovable. The rule exists for `**kwargs` and not for `*args`.
+2. **Deprecation through a helper (1) and through a parameter note (1).** `set_figure` calls
+   `_api.warn_deprecated(...)`: a function whose name says so, but not called `warn`. A
+   `.. deprecated::` in a *Notes* section whose text is "The *axis* parameter is pending-deprecated"
+   deprecates a parameter, and is not caught by the "This keyword…" test.
+3. **A docstring template (1).** `data : indexable object, optional` followed by
+   `DATA_PARAMETER_PLACEHOLDER`, filled in by a decorator elsewhere.
+
+I did **not** fix these in the same change. Fixing them against the set that revealed them would
+spend it, and each needs an amendment first. They need a new set of packages to test against.
+
+### Recall
+
+On `rich`, three seeds: 188 provable injected drifts, all found, 0 of 60 controls reported each
+time, and 23, 28 and 31 injections withheld on purpose (it was 26, 25 and 22 before the new
+rules). Ontolith: 34 of 34. The harness now also counts a docs default changed behind a `None`
+default as withheld, and skips a deprecation injection where the importer cannot say "not
+deprecated".
+
+### What the numbers do and do not say
+
+- They say the four causes found earlier are fixed on the packages they were found on, without
+  losing the findings I read as real there.
+- They do not say precision is near 90%. The only held-out evidence says it is not.
+- The remaining 93 are still labelled by one reader. The 34 or so that depend on PRD §14 #10 are
+  the ones a second reader could dispute.
+

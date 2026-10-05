@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `100` and `100.0` are the same default, and a quoted word *default* in a sentence is no
   longer read as the keyword.
 
+- A property no longer has a signature stated for it (its docstring describes the object it
+  returns); deprecation is stated `true` when a leading warning says so and `false` only when
+  nothing could be hiding a marker; a `.. deprecated::` nested in a parameter no longer
+  deprecates the function; a documented `default None` allows `None`; docs naming a supertype
+  of the annotation do not differ provably; and a code default of `None` against a documented
+  concrete default is no longer reported. See ADR-0004 Amendment 3 and ADR-0007 Amendment 5.
+
 ### Added
 
 - M0 foundations scaffold: clean-architecture package layout
