@@ -516,7 +516,7 @@ now spent for tuning; these rules are to be tested on packages chosen beforehand
 `param.<p>.exists` is stated `false` only if `p` is not a named parameter **and the signature has
 neither `*args` nor `**kwargs`**. Today only `**kwargs` is considered. `pts_to_midstep(x, *args)`
 documents `y1` and `yp`, which are what `*args` receives; `Bbox.from_extents(*args)` documents
-`left`, `bottom`, `right`, `top`. In the measured packages this was 14 of 22 false positives.
+`left`, `bottom`, `right`, `top`. In the three held-out packages this was 14 of the 22 findings (and of the 17 false ones).
 
 *Cost.* A parameter documented on a function with `*args` that really does not exist is no longer
 reported.
