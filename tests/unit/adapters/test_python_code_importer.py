@@ -191,7 +191,6 @@ class TestDeprecation:
         facts = extract("""
             def f():
                 return 1
-                warnings.warn("late", DeprecationWarning)
             def g():
                 warnings.warn("other", UserWarning)
         """)
@@ -201,6 +200,67 @@ class TestDeprecation:
     def test_other_calls_at_entry_are_not_deprecation_warnings(self) -> None:
         facts = extract("def f():\n    log('old', DeprecationWarning)\n")
         assert facts[("py:pkg.mod.f", "deprecated")] == "false"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "import warnings\n    warnings.warn('f is deprecated', DeprecationWarning)",
+            "from warnings import warn\n    warn('old', category=DeprecationWarning)",
+            "warnings.warn('f is deprecated, use g', Pandas4Warning, stacklevel=2)",
+            "warnings.warn(f'{__name__} is DEPRECATED', FutureWarning)",
+            "warnings.warn('old', PendingDeprecationWarning)",
+            "warnings.warn('x ' 'is deprecated', MyWarning)",
+        ],
+    )
+    def test_a_leading_deprecation_warning_marks_it_deprecated(self, body: str) -> None:
+        facts = extract(f'def f():\n    """Doc."""\n    {body}\n    return 1\n')
+        assert facts[("py:pkg.mod.f", "deprecated")] == "true"
+
+    def test_a_leading_warning_with_a_custom_category_and_no_mention_is_not_a_marker(self) -> None:
+        facts = extract("def f():\n    warnings.warn('careful', MyWarning)\n    return 1\n")
+        assert facts[("py:pkg.mod.f", "deprecated")] == "false"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "x = 1\n    warnings.warn('old', DeprecationWarning)",  # not leading
+            "if flag:\n        warnings.warn('f is deprecated', MyWarning)",  # conditional
+            "return 1\n    warnings.warn('late', DeprecationWarning)",
+        ],
+    )
+    def test_a_deprecation_warning_that_is_not_leading_leaves_it_unstated(self, body: str) -> None:
+        """It may well be deprecated; saying `false` would be a claim we cannot back."""
+        facts = extract(f"def f(flag):\n    {body}\n")
+        assert ("py:pkg.mod.f", "deprecated") not in facts
+
+    def test_a_warn_with_no_arguments_is_not_a_deprecation_notice(self) -> None:
+        facts = extract("def f():\n    warn()\n    return 1\n")
+        assert facts[("py:pkg.mod.f", "deprecated")] == "false"
+
+    def test_an_unknown_decorator_leaves_it_unstated(self) -> None:
+        facts = extract("@mystery\ndef f(): ...\n@nx.dispatch(a=1)\ndef g(): ...\n")
+        assert ("py:pkg.mod.f", "deprecated") not in facts
+        assert ("py:pkg.mod.g", "deprecated") not in facts
+
+    @pytest.mark.parametrize(
+        "decorator",
+        ["staticmethod", "classmethod", "property", "cached_property", "functools.lru_cache",
+         "final", "abstractmethod"],
+    )  # fmt: skip
+    def test_known_decorators_do_not_stop_it_being_false(self, decorator: str) -> None:
+        facts = extract(f"class C:\n    @{decorator}\n    def f(self): ...\n")
+        assert facts[("py:pkg.mod.C.f", "deprecated")] == "false"
+
+    def test_a_known_decorator_does_not_hide_a_marker_either(self) -> None:
+        facts = extract("@property\n@deprecated('x')\ndef f(self): ...\n")
+        assert facts[("py:pkg.mod.f", "deprecated")] == "true"
+
+    def test_a_plain_dataclass_is_not_deprecated_but_an_unknown_class_decorator_is_unstated(
+        self,
+    ) -> None:
+        facts = extract("@dataclass\nclass A: ...\n@mystery\nclass B: ...\n")
+        assert facts[("py:pkg.mod.A", "deprecated")] == "false"
+        assert ("py:pkg.mod.B", "deprecated") not in facts
 
     def test_classes_can_be_deprecated(self) -> None:
         assert extract("@deprecated('x')\nclass C: ...")[("py:pkg.mod.C", "deprecated")] == "true"
@@ -558,11 +618,12 @@ class TestDecoratedCallables:
         source = f"{decorator}\ndef f(a: int = 1) -> str:\n    raise KeyError\n"
         assert self._signature_facts(source) == set()
 
-    def test_existence_kind_and_deprecation_are_still_stated(self) -> None:
+    def test_existence_and_kind_are_still_stated_but_not_that_it_is_undeprecated(self) -> None:
+        """A decorator we do not know may be the thing that deprecates it (Amendment 3)."""
         facts = extract("@click.command()\ndef f(a): ...\n")
         assert facts[("py:pkg.mod.f", "exists")] == "true"
         assert facts[("py:pkg.mod.f", "kind")] == "function"
-        assert facts[("py:pkg.mod.f", "deprecated")] == "false"
+        assert ("py:pkg.mod.f", "deprecated") not in facts
 
     @pytest.mark.parametrize(
         "decorator",
@@ -570,12 +631,10 @@ class TestDecoratedCallables:
             "@staticmethod",
             "@classmethod",
             "@abc.abstractmethod",
-            "@property",
             "@typing.final",
             "@deprecated('x')",
             "@functools.lru_cache(maxsize=None)",
             "@cache",
-            "@cached_property",
         ],
     )
     def test_decorators_that_preserve_the_signature_do_not_suppress_it(
@@ -650,3 +709,33 @@ class TestSameFileWrapperDecorators:
     def test_the_recognition_is_by_name_within_the_file(self) -> None:
         source = self.WRAPPER + "class C:\n    @other\n    def m(self, a=1): ...\n"
         assert not self._has_signature(source)
+
+
+class TestProperties:
+    """A property is accessed, not called: its docstring describes the object it returns."""
+
+    SIGNATURE_ASPECTS = ("returns.type", "param.n.exists", "param.n.type", "param.n.default")
+
+    @pytest.mark.parametrize(
+        "decorator", ["property", "cached_property", "functools.cached_property", "x.setter"]
+    )
+    def test_a_property_states_no_signature(self, decorator: str) -> None:
+        facts = extract(
+            f"class C:\n    @{decorator}\n    def edges(self, n: int = 1) -> int: ...\n"
+        )
+        for aspect in self.SIGNATURE_ASPECTS:
+            assert ("py:pkg.mod.C.edges", aspect) not in facts
+
+    def test_a_property_is_still_known_to_exist_with_its_kind_and_deprecation(self) -> None:
+        facts = extract("class C:\n    @property\n    def edges(self): ...\n")
+        assert facts[("py:pkg.mod.C.edges", "exists")] == "true"
+        assert facts[("py:pkg.mod.C.edges", "kind")] == "method"
+        assert facts[("py:pkg.mod.C.edges", "deprecated")] == "false"
+
+    def test_a_property_that_raises_still_says_so(self) -> None:
+        facts = extract("class C:\n    @property\n    def v(self):\n        raise KeyError('x')\n")
+        assert facts[("py:pkg.mod.C.v", "raises.KeyError")] == "true"
+
+    def test_a_method_is_not_a_property(self) -> None:
+        facts = extract("class C:\n    def edges(self, n: int = 1) -> int: ...\n")
+        assert facts[("py:pkg.mod.C.edges", "param.n.default")] == "1"

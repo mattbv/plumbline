@@ -105,32 +105,92 @@ def _signature_is_trustworthy(func: _FunctionNode, wrappers: frozenset[str] = fr
     return True
 
 
-def _is_deprecation_warning(call: ast.Call) -> bool:
-    """Whether ``call`` is ``warn(..., DeprecationWarning)`` (positional or ``category=``)."""
-    func = _dotted(call.func) or ""
-    if func.rsplit(".", 1)[-1] != "warn":
-        return False
-    candidates = list(call.args[1:2]) + [k.value for k in call.keywords if k.arg == "category"]
-    return any((_dotted(c) or "").rsplit(".", 1)[-1] == "DeprecationWarning" for c in candidates)
-
-
-def _is_deprecated(func: _FunctionNode | ast.ClassDef) -> bool:
-    """A ``@deprecated`` decorator, or (functions) a DeprecationWarning at entry."""
-    for decorator in func.decorator_list:
-        target = decorator.func if isinstance(decorator, ast.Call) else decorator
-        if (_dotted(target) or "").rsplit(".", 1)[-1] == "deprecated":
-            return True
-    if isinstance(func, ast.ClassDef):
-        return False
-    body = func.body
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-        body = body[1:]  # skip the docstring
-    first = body[0] if body else None
-    return (
-        isinstance(first, ast.Expr)
-        and isinstance(first.value, ast.Call)
-        and _is_deprecation_warning(first.value)
+def _message_text(call: ast.Call) -> str:
+    """The text of a ``warn`` call's message, lower-cased (string, f-string, or concatenation)."""
+    if not call.args:
+        return ""
+    return "".join(
+        node.value.lower()
+        for node in ast.walk(call.args[0])
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
     )
+
+
+def _warn_category(call: ast.Call) -> str:
+    """The last name of a ``warn`` call's category, positional or ``category=``, else ``""``."""
+    candidates = list(call.args[1:2]) + [k.value for k in call.keywords if k.arg == "category"]
+    return (_dotted(candidates[0]) or "").rsplit(".", 1)[-1] if candidates else ""
+
+
+def _is_warn(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and (_dotted(node.func) or "").rsplit(".", 1)[-1] == "warn"
+
+
+def _is_deprecation_warning(call: ast.Call) -> bool:
+    """Whether ``call`` is a ``warn`` that says the code is deprecated (ADR-0004 Amendment 3).
+
+    The category is ``DeprecationWarning`` or ``PendingDeprecationWarning``, or it is any
+    ``*Warning`` (a project's own subclass) and the message says "deprecated".
+    """
+    if not _is_warn(call):
+        return False
+    category = _warn_category(call)
+    return category in ("DeprecationWarning", "PendingDeprecationWarning") or (
+        category.endswith("Warning") and "deprecat" in _message_text(call)
+    )
+
+
+def _mentions_deprecation(call: ast.Call) -> bool:
+    """Whether a ``warn`` call might be a deprecation notice, however it is phrased."""
+    return _is_warn(call) and (
+        "deprecat" in _message_text(call)
+        or _warn_category(call) in ("DeprecationWarning", "PendingDeprecationWarning")
+    )
+
+
+def _decorator_names(node: _FunctionNode | ast.ClassDef) -> list[str]:
+    return [
+        (_dotted(d.func if isinstance(d, ast.Call) else d) or "").rsplit(".", 1)[-1]
+        for d in node.decorator_list
+    ]
+
+
+def _leading_statement(func: _FunctionNode) -> ast.stmt | None:
+    """The first statement that is not the docstring or an import."""
+    for stmt in func.body:
+        if isinstance(stmt, ast.Import | ast.ImportFrom):
+            continue
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            continue  # the docstring
+        return stmt
+    return None
+
+
+def _deprecation(node: _FunctionNode | ast.ClassDef) -> bool | None:
+    """``True`` if a deprecation marker is visible, ``False`` if provably none, else ``None``.
+
+    A docstring only ever claims deprecation, so a wrong ``True`` cannot open a dispute and a
+    wrong ``False`` can: the answer is ``False`` only when nothing could be hiding one (an
+    unknown decorator, or a deprecation warning somewhere other than the start of the body).
+    """
+    names = _decorator_names(node)
+    if "deprecated" in names:
+        return True
+    if not isinstance(node, ast.ClassDef):
+        leading = _leading_statement(node)
+        if (
+            isinstance(leading, ast.Expr)
+            and isinstance(leading.value, ast.Call)
+            and _is_deprecation_warning(leading.value)
+        ):
+            return True
+    if any(name not in _DEPRECATION_NEUTRAL_DECORATORS for name in names):
+        return None
+    if not isinstance(node, ast.ClassDef) and any(
+        _mentions_deprecation(call) for call in ast.walk(node) if isinstance(call, ast.Call)
+    ):
+        return None
+    return False
 
 
 def _raised_exceptions(func: _FunctionNode) -> list[str]:
@@ -154,6 +214,17 @@ def _raised_exceptions(func: _FunctionNode) -> list[str]:
 _ALLOWED_CLASS_DECORATORS = frozenset(
     {"final", "runtime_checkable", "deprecated", "type_check_only"}
 )
+_DEPRECATION_NEUTRAL_DECORATORS = frozenset(
+    {
+        "staticmethod", "classmethod", "abstractmethod", "property", "getter", "setter",
+        "deleter", "final", "override", "cache", "lru_cache", "cached_property", "overload",
+        "dataclass", "total_ordering", "runtime_checkable", "type_check_only",
+    }
+)  # fmt: skip
+"""Decorators that cannot deprecate what they decorate, so their presence does not make
+"not deprecated" a claim we cannot back (ADR-0004 Amendment 3)."""
+_PROPERTY_DECORATORS = frozenset({"property", "cached_property", "getter", "setter", "deleter"})
+"""A property is accessed, not called: its docstring describes the object it returns."""
 _SIGNATURE_SAFE_DECORATORS = frozenset(
     {
         "staticmethod", "classmethod", "abstractmethod", "property", "getter", "setter",
@@ -393,14 +464,16 @@ class PythonCodeImporter:
             emit.fact(key, "kind", "attribute", start, end, "name also bound by assignment")
             return
         emit.fact(key, "kind", _kind_of(node, definition.in_class), start, end, "definition kind")
-        emit.fact(
-            key,
-            "deprecated",
-            canonical.canonical_bool(_is_deprecated(node)),
-            start,
-            end,
-            "deprecation marker (decorator or DeprecationWarning at entry)",
-        )
+        deprecation = _deprecation(node)
+        if deprecation is not None:
+            emit.fact(
+                key,
+                "deprecated",
+                canonical.canonical_bool(deprecation),
+                start,
+                end,
+                "deprecation marker (decorator, or a warning that says so, at entry)",
+            )
         if isinstance(node, ast.ClassDef):
             if scope is not None:
                 emit.fact(
@@ -416,6 +489,8 @@ class PythonCodeImporter:
             return  # a decorator may have rewritten the signature: say nothing about it
         for exc in _raised_exceptions(node):
             emit.fact(key, f"raises.{exc}", "true", start, end, "direct `raise` in body")
+        if _PROPERTY_DECORATORS.intersection(_decorator_names(node)):
+            return  # its docstring describes the returned object's call, not this signature
         self._signature_claims(emit, key, node, definition.in_class)
 
     def _signature_claims(
