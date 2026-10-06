@@ -126,12 +126,22 @@ def _is_warn(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and (_dotted(node.func) or "").rsplit(".", 1)[-1] == "warn"
 
 
+def _is_deprecation_helper(node: ast.AST) -> bool:
+    """A call to a function whose name says it deprecates (``warn_deprecated``), ADR-0004 A4."""
+    return (
+        isinstance(node, ast.Call)
+        and "deprecat" in (_dotted(node.func) or "").lower().rsplit(".", 1)[-1]
+    )
+
+
 def _is_deprecation_warning(call: ast.Call) -> bool:
     """Whether ``call`` is a ``warn`` that says the code is deprecated (ADR-0004 Amendment 3).
 
     The category is ``DeprecationWarning`` or ``PendingDeprecationWarning``, or it is any
     ``*Warning`` (a project's own subclass) and the message says "deprecated".
     """
+    if _is_deprecation_helper(call):
+        return True
     if not _is_warn(call):
         return False
     category = _warn_category(call)
@@ -142,9 +152,12 @@ def _is_deprecation_warning(call: ast.Call) -> bool:
 
 def _mentions_deprecation(call: ast.Call) -> bool:
     """Whether a ``warn`` call might be a deprecation notice, however it is phrased."""
-    return _is_warn(call) and (
-        "deprecat" in _message_text(call)
-        or _warn_category(call) in ("DeprecationWarning", "PendingDeprecationWarning")
+    return _is_deprecation_helper(call) or (
+        _is_warn(call)
+        and (
+            "deprecat" in _message_text(call)
+            or _warn_category(call) in ("DeprecationWarning", "PendingDeprecationWarning")
+        )
     )
 
 

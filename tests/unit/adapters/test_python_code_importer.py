@@ -233,6 +233,44 @@ class TestDeprecation:
         facts = extract(f"def f(flag):\n    {body}\n")
         assert ("py:pkg.mod.f", "deprecated") not in facts
 
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "_api.warn_deprecated('3.10', message='x')",
+            "warn_deprecated('3.10')",
+            "self._deprecate_this()",
+            "emit_deprecation_warning('x')",
+        ],
+    )
+    def test_a_leading_deprecation_helper_marks_it_deprecated(self, call: str) -> None:
+        facts = extract(f'def f(self):\n    """Doc."""\n    {call}\n    return 1\n')
+        assert facts[("py:pkg.mod.f", "deprecated")] == "true"
+
+    def test_a_deprecation_helper_after_the_start_leaves_it_unstated(self) -> None:
+        source = (
+            "def f(self, fig):\n    if fig is self._root:\n"
+            "        _api.warn_deprecated('3.10', message='x')\n        return\n"
+        )
+        assert ("py:pkg.mod.f", "deprecated") not in extract(source)
+
+    def test_a_helper_nested_in_an_inner_function_also_leaves_it_unstated(self) -> None:
+        source = "def f():\n    def inner():\n        warn_deprecated('x')\n    return inner\n"
+        assert ("py:pkg.mod.f", "deprecated") not in extract(source)
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "log.warning('x')",
+            "deprecation = 1",
+            "check_value(3)",
+            "deprecated_names.add('x')",  # the object's name, not the function's
+            "self._deprecations.clear()",
+        ],
+    )
+    def test_calls_that_do_not_say_deprecat_are_not_markers(self, call: str) -> None:
+        facts = extract(f"def f():\n    {call}\n    return 1\n")
+        assert facts[("py:pkg.mod.f", "deprecated")] == "false"
+
     def test_a_warn_with_no_arguments_is_not_a_deprecation_notice(self) -> None:
         facts = extract("def f():\n    warn()\n    return 1\n")
         assert facts[("py:pkg.mod.f", "deprecated")] == "false"
