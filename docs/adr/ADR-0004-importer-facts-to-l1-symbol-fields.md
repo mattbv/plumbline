@@ -235,3 +235,29 @@ A call counts as a deprecation notice if its callee's last name is `warn`, **or 
 *Cost.* A function that calls such a helper for something other than its own deprecation (a
 helper that deprecates an argument) is no longer stated "not deprecated". That is the smaller
 loss: the field is then absent, and the slot abstains.
+
+## Amendment 5: deprecation through `__init__`, and through a message (proposed)
+
+Reading five packages baselined in advance
+([report](../precision-on-three-packages.md)) found two ways a symbol is deprecated that the code
+importer did not see, and so stated "not deprecated" when it was.
+
+### A. A class is deprecated if its `__init__` says so
+
+`sympy.physics.mechanics.body.Body` warns from `__init__` through `sympy_deprecation_warning(...)`;
+the class check looked only at class decorators. A class counts as deprecated if its `__init__`
+begins with a deprecation notice (as for a function: Amendment 3, and a helper per Amendment 4).
+It is stated `false` only if its `__init__` has no deprecation mention anywhere; otherwise it is
+not stated. A class with no `__init__` is judged by its decorators alone, as before.
+
+### B. A notice whose message says so, whatever the callee is called
+
+`xarray.coding.cftime_offsets.cftime_range` begins with
+`emit_user_level_warning("cftime_range() is deprecated, …")`: a project's own helper whose *name*
+does not say it deprecates but whose *message* does. A call whose first positional argument is a
+string containing "deprecat" is a deprecation notice, whatever the callee: as a leading statement
+it makes `is_deprecated = true`; anywhere in the body it stops the importer saying `false`.
+
+*Cost.* A call that merely mentions "deprecated" in a string (a logging call describing someone
+else's deprecation) at the start of a body marks the function deprecated. A wrong `true` cannot
+open a dispute (a docstring never claims the opposite), so this is the safe direction.
