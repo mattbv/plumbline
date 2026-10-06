@@ -566,3 +566,105 @@ one instance does not show it recurs. It is recorded as a known limit.
    result is reported whatever it is, including new causes.
 3. The earlier packages are re-run as a regression check only: a finding I labelled REAL must not
    disappear.
+
+## Amendment 7: narrower docs, sentinel types, and five docstring misreadings (proposed)
+
+[Reading 184 findings on five packages](../precision-on-three-packages.md), chosen and baselined
+before the rules they test existed, found 44 false positives from four causes and 79 findings that
+turn on a policy choice. The maintainer has decided the two policy questions; the rest are defects.
+
+### A. Docs narrower than the annotation abstain (decided by the maintainer)
+
+Amendment 5 C made docs that name a *supertype* of the annotation not provably different, and left
+docs that name a *subtype* reported. The measurement found that to be most of what was left:
+`xarray` documents `dict` for parameters typed `Mapping[Any, Any]`, 79 findings across the five
+packages. The docs promise less than the code accepts, which is true; it is also what most authors
+write for the common case.
+
+A difference is not provable when every member the docs name is, or is a subtype of, a member of the
+code's type. Bare against parameterized follows the same rule as for supertypes (`dict` for
+`Mapping[Any, Any]`; `list` for `Sequence[str]`), and a union the docs name only part of
+(`bool` for `Mapping[Any, bool] | bool`) is covered. The rule is the mirror of C, using the same
+fixed table of relations, and the rule that a top type already covers `None` is unchanged.
+
+Unchanged: PRD §14 #10 still holds. Docs that omit a `None` the code allows are reported unless B
+below applies.
+
+*Cost.* A doc that omits an accepted alternative or names a narrower container than the code
+accepts is no longer reported.
+
+### B. The `None` of a sentinel parameter's type (decided by the maintainer)
+
+Amendment 5 D treats a `None` default as a sentinel: the documented effective default is not
+reported against it. The type of the same parameter still reported "the docs omit `None`" (ten
+findings: `case : bool, default: True` against `case: bool | None = None`). When the **code's**
+default is `None` and the docs state a concrete default for the same parameter, the `| None` in the
+annotation is that sentinel, and an omitted `None` in the documented type abstains.
+
+The projector reads the parameter's default claims (`<symbol>#param.<p>.default`: present, not
+being withdrawn, and being asserted in the same commit) when deciding the type slot. A docs default of
+`None`, or none, leaves PRD §14 #10 in force.
+
+### C. A NumPy section may be underlined with any single punctuation character
+
+Sections underlined with `=` (`Returns\n=======`) are not recognized, so what follows a `Returns`
+or `Examples` heading is read as parameters: `Examples`, `Returns`, `Symbol` became parameters of
+`Beam.apply_rotation_hinge` (13 findings in `sympy`). A heading is a line followed by a run of at
+least three of one of `-`, `=`, `~`, `^`, `#`, at the same indentation.
+
+### D. A NumPy or Google type field is a union of alternatives
+
+`tuple, None`, `None, int, or tuple of int, optional`, `list, None, optional (default None)`: the
+importer reads the first comma-separated part as the whole type (so `None`, or `tuple`) and misses
+`optional (default None)` because it is not exactly `optional` (13 findings in `astropy`).
+
+The type field is split at top-level commas. A part is a **qualifier** if it is `optional`
+(optionally followed by a parenthesized default), begins `default`, or is `keyword only` /
+`keyword-only` / `positional`. A leading `or ` is dropped. The remaining parts are alternatives and
+are joined as a union. If any does not parse as a type (`tuple of int`), **no type is claimed**. A
+qualifier's meaning is as before: `optional` or a `None` default adds `None` (Amendment 5 B).
+
+### E. A NumPy entry's names must all be identifiers
+
+`{plot, diag, grid}_kws : dicts` is shorthand for three parameters, and the line `possible,
+provided the keyword …` is a wrapped description that lost its indentation. The importer accepts any
+comma-separated part that is an identifier, so each became a parameter (`diag`, `possible`). An entry
+is read only if **every** comma-separated name is a plain identifier; otherwise the whole entry is
+dropped. A `Parameters` section whose only content is `None` has no entries (`seaborn.get_color_cycle`
+was read as having a parameter named `None`).
+
+### F. A `Returns` entry with several names claims no type
+
+`sigma_clipped_stats` documents `mean, median, stddev : float`: three values, each a `float`. Read as
+one return of type `float` it disagrees with the annotation `tuple[float, float, float]`. A `Returns`
+entry with more than one name claims no `returns.type`.
+
+### G. A deprecation note about a usage is not about the symbol
+
+`sympy` documents `.. deprecated:: 1.7` / `Using arguments that aren't subclasses of Expr in core
+operators … is deprecated` on `Add`, `Mul` and `Pow`, `.. deprecated:: 1.6` / `Using integrate() with
+Poly …` on `integrate`, and `Configuring Permutation printing …` on `Permutation`. These deprecate a
+way of calling, not the symbol (13 findings with the class-`__init__` case; ADR-0004 Amendment 5 A).
+A directive whose note begins with one of `Using`, `Passing`, `Calling`, `Setting`, `Configuring`,
+`Specifying`, `Providing` or `Supplying` is not about the symbol, as a note about a parameter is not
+(Amendment 6 B).
+
+*Cost.* A symbol whose deprecation note genuinely begins "Using" is not read as deprecated.
+Ignoring a directive can only remove a claim.
+
+### Left alone
+
+A `Returns` section that documents an argument rather than a return value, and a docstring template
+placeholder, are single cases in one project's convention.
+
+### How it will be verified
+
+1. Unit tests per rule and a zoo scenario per cause, each with the neighbouring case that must still
+   be reported (docs that omit `None` with no sentinel; a heading underlined with `-`; one name that
+   is not an identifier among valid ones; a directive with an ordinary note).
+2. A fresh set, baselined before this amendment was written: `statsmodels` 26, `geopandas` 8,
+   `bokeh` 33, `pint` 6, `altair` 28, `pyproj` 13 findings (114 in total); `scikit_image`, `docutils`,
+   `click`, `tqdm` and `shapely` gave none. They are read only after the rules exist, and the result
+   is reported whatever it is.
+3. The packages read so far are re-run as a regression check only, and the report lists any finding
+   labelled REAL that disappears.
