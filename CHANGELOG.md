@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deprecates the function; a documented `default None` allows `None`; docs naming a supertype
   of the annotation do not differ provably; and a code default of `None` against a documented
   concrete default is no longer reported. See ADR-0004 Amendment 3 and ADR-0007 Amendment 5.
+- A documented parameter that is not declared is no longer reported missing when the signature has
+  `*args` (it may be what `*args` receives); a `.. deprecated::` whose note is about a parameter
+  ("The *axis* parameter…") is read as about that parameter even after a blank line; and a call to a
+  function whose name says it deprecates (`warn_deprecated`) counts as a deprecation notice. See
+  ADR-0007 Amendment 6 and ADR-0004 Amendment 4.
 
 ### Added
 

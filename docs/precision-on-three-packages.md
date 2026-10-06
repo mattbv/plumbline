@@ -208,3 +208,89 @@ deprecated".
 - The remaining 93 are still labelled by one reader. The 34 or so that depend on PRD §14 #10 are
   the ones a second reader could dispute.
 
+## After Amendment 6: five packages chosen and baselined in advance
+
+The rules for `*args`, parameter notes and deprecation helpers (ADR-0007 Amendment 6, ADR-0004
+Amendment 4) were implemented, then tried on five packages that had not been used for anything:
+`xarray`, `astropy`, `dask`, `seaborn`, `sympy`. Their baseline counts (192 findings) were
+recorded **before the amendment was written** and before any finding was read.
+
+**Regression, on the packages already read.** `matplotlib` went from 21 findings to 5, losing
+exactly the 14 `*args` findings and the 2 deprecation false positives it had revealed, and nothing
+else. `pandas`, `networkx`, `boltons`, `scikit_learn` and `scipy` did not change at all. `rich`
+went from 39 to 37, and **both were real**: stale documentation naming a parameter that `*args`
+receives (`control_codes` for `control(self, *control)`). That is the stated cost of the rule.
+
+**The rules removed 8 of the 192 fresh findings**, 4%: 1 `exists` in `astropy`, 7 `deprecated` in
+`sympy`. Nearly everything on these packages is something the rules were not written for. That
+is the result that matters.
+
+### What 184 findings are
+
+I read all 184. Labels: **REAL** (docs and code disagree and a reader could be misled);
+**NARROW** (the docs name a subtype of what the code accepts: `dict` for a `Mapping` parameter,
+`list` for a `Sequence`; technically a disagreement, and one many teams would not call drift);
+**SENTINEL-TYPE** (code `X | None = None`, docs `X, default: <concrete>`: the sentinel idiom
+that Amendment 5 D already treats as not drift for the *default*, here showing up in the type);
+**FALSE** (the tool misread something).
+
+| Package | Findings | Real | Narrow | Sentinel-type | Arguable | False |
+|---|---|---|---|---|---|---|
+| `xarray` | 96 | 22 | 64 | 9 | 0 | 1 |
+| `astropy` | 43 | 18 | 11 | 0 | 0 | 14 |
+| `dask` | 14 | 7 | 4 | 1 | 1 | 1 |
+| `seaborn` | 2 | 0 | 0 | 0 | 0 | 2 |
+| `sympy` | 29 | 3 | 0 | 0 | 0 | 26 |
+| **All** | **184** | **50** | **79** | **10** | **1** | **44** |
+
+**44 of 184 (24%) are false.** Only 50 (27%) are clearly real. 79 (43%) are narrow-docs findings
+that depend on a policy call. Counting narrow, sentinel-type and arguable as true, 140 of 184
+(76%) are true. None of these figures is near the plan's 90%, and the honest reading is that
+**the criterion is not met, and two policy questions decide most of the remaining gap.**
+
+### New causes of false positives (44)
+
+1. **A section underlined with `=` (13, `sympy`).** `Returns\n=======` and `Examples\n========`
+   are not recognized as headings, so everything after them is read as parameters: `Examples`,
+   `Returns`, `Symbol` become parameters of `Beam.apply_rotation_hinge`.
+2. **A comma-separated list of alternative types (13, `astropy`).** `tuple, None`,
+   `None, int, or tuple of int, optional`, `list, None, optional (default None)`: the importer
+   takes the first part as the whole type (`None`, or `tuple`) and misses `optional (default
+   None)`, so the claim is wrong in either direction.
+3. **Deprecation: a usage note, and a class that warns from `__init__` (13, `sympy`).** The
+   directive says "using arguments that aren't `Expr` … is deprecated" (a usage), or the class
+   warns through `sympy_deprecation_warning(...)` in `__init__`, which the class check does not
+   enter.
+4. **Five single cases:** a `Parameters` section reading `None` is read as a parameter named
+   `None`; the prose "…if possible, provided the keyword…" is read as an entry named `possible`;
+   `{plot, diag, grid}_kws` is read as a parameter `diag`; `emit_user_level_warning('… is
+   deprecated …')` is a project helper whose message, not its name, says so; and a `Returns`
+   section listing three values each typed `float` is read as returning `float`.
+
+### The two policy questions
+
+- **NARROW (79).** Is `dict` documented for a `Mapping` parameter drift? It is true that the
+  docs promise less than the code accepts. It is also what most numpydoc authors write for the
+  common case. Amendment 5 D settled the same question for sentinel defaults by abstaining.
+- **SENTINEL-TYPE (10).** If a `None` default is a sentinel, the `| None` in the type is the same
+  sentinel. As things stand the default is silent and the type is reported.
+
+### What I am least sure about
+
+- Every label is mine. The 50 REAL include 19 PRD §14 #10 cases (docs omit a `None` the code
+  allows) that a reader who finds #10 too aggressive would move out.
+- NARROW and SENTINEL-TYPE are classifications I invented to separate a judgement call from an
+  error. Where I put the line is itself a judgement.
+- The three broad classes (NARROW 79, SENTINEL-TYPE 10, PRD §14 #10 19) were assigned by a script
+  and spot-read, not read one by one. The 61 `exists`, `deprecated` and `default` findings and
+  the 64 type findings outside those classes were read individually.
+- Earlier results counted a narrower-docs finding as REAL (26 in `pandas`). Split the same way,
+  those would be NARROW too, and the earlier REAL figures would be lower.
+
+### Recall
+
+On `rich`, three seeds: 188 provable injected drifts, all found, 0 of 60 controls reported each
+time (23, 28, 31 withheld on purpose). Ontolith: 34 of 34. One miss appeared along the way and
+was the harness's: it renamed a parameter in a function with `*args`, which is now unprovable by
+design. The harness's guard now covers `*args` as well as `**kwargs`.
+
