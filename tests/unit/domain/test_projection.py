@@ -48,16 +48,32 @@ class TestParameterDetails:
         """No default and non-literal default look the same in the blob (ADR-0004)."""
         assert project(aspect, fn(), []) is None
 
-    def test_a_missing_parameter_is_absent_without_kwargs(self) -> None:
-        assert project("param.retries.exists", fn(), []) == "false"
+    def test_a_missing_parameter_is_absent_without_star_parameters(self) -> None:
+        plain = Signature(param_names=("host", "timeout"))
+        assert project("param.retries.exists", fn(plain), []) == "false"
+
+    def test_but_not_provably_absent_when_star_args_could_take_it(self) -> None:
+        """`pts_to_midstep(x, *args)` documents `y1` and `yp`: they are what `*args` receives."""
+        star = Signature(param_names=("x", "*args"))
+        assert project("param.y1.exists", fn(star), []) is None
+        assert project("param.x.exists", fn(star), []) == "true"
+        assert project("param.args.exists", fn(star), []) == "true"  # by its bare name
+
+    def test_star_args_and_kwargs_together_are_still_unprovable(self) -> None:
+        both = Signature(param_names=("x", "*args", "**kw"))
+        assert project("param.y1.exists", fn(both), []) is None
+
+    def test_keyword_only_parameters_after_star_args_are_still_named(self) -> None:
+        sig = Signature(param_names=("x", "*args", "flag"))
+        assert project("param.flag.exists", fn(sig), []) == "true"
 
     def test_but_not_provably_absent_when_kwargs_could_take_it(self) -> None:
         assert project("param.retries.exists", fn(KWARGS_SIG), []) is None
         assert project("param.host.exists", fn(KWARGS_SIG), []) == "true"
 
-    def test_star_args_does_not_accept_keywords(self) -> None:
-        """``*args`` takes positionals only, so a missing keyword is still absent."""
-        assert project("param.retries.exists", fn(Signature(param_names=("*args",))), []) == "false"
+    def test_star_args_leaves_a_missing_name_unprovable(self) -> None:
+        """Amendment 6 A: a documented name may be what ``*args`` receives."""
+        assert project("param.retries.exists", fn(Signature(param_names=("*args",))), []) is None
 
     def test_a_default_or_type_for_a_missing_parameter_is_not_projected(self) -> None:
         assert project("param.retries.default", fn(), []) is None
@@ -213,5 +229,5 @@ class TestStarredParameters:
         assert project("param.concepts.default", fn(self.SIG), []) is None
         assert project("param.concepts.type", fn(self.SIG), []) is None
 
-    def test_an_unrelated_name_is_still_absent_without_kwargs(self) -> None:
-        assert project("param.other.exists", fn(self.SIG), []) == "false"
+    def test_an_unrelated_name_is_unprovable_beside_a_starred_parameter(self) -> None:
+        assert project("param.other.exists", fn(self.SIG), []) is None

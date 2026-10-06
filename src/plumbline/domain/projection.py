@@ -140,8 +140,9 @@ def _parameter(name: str, facet: str, sig: Signature, names: tuple[str, ...]) ->
         # A parameter documented by its bare name may be declared `*name` or `**name`.
         if name in named or name in {n.lstrip("*") for n in names if n.startswith("*")}:
             return canonical.canonical_bool(True)
-        # A **kwargs parameter can accept any keyword: its absence is not provable.
-        if any(n.startswith("**") for n in names):
+        # `**kwargs` can accept any keyword and `*args` any positional: a documented name that is
+        # not declared may be what they receive, so its absence is not provable (Amendment 6 A).
+        if any(n.startswith("*") for n in names):
             return None
         return canonical.canonical_bool(False)
     if name not in named:
