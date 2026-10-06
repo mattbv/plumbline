@@ -293,3 +293,19 @@ class TestDocstringValueEdits:
 
     def test_an_empty_summary_cannot_be_reworded(self) -> None:
         assert m.docstring_edit_summary("") is None
+
+
+class TestStarParameters:
+    @pytest.mark.parametrize(
+        ("signature", "expected"),
+        [
+            ("def f(a, *args): ...", True),
+            ("def f(a, **kw): ...", True),
+            ("def f(a, *args, **kw): ...", True),
+            ("def f(a, *, flag=1): ...", False),  # a bare `*` is not a parameter
+            ("def f(a, b=1): ...", False),
+        ],
+    )
+    def test_args_and_kwargs_are_both_star_parameters(self, signature: str, expected: bool) -> None:
+        func = m.find_function(ast.parse(signature), "f")
+        assert func is not None and m.has_star_parameter(func) is expected

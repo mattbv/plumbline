@@ -106,9 +106,13 @@ def _default(func: FunctionNode, name: str) -> ast.expr | None:
     return None
 
 
-def has_var_keyword(func: FunctionNode) -> bool:
-    """Whether the signature has ``**kwargs`` (which makes a missing keyword unprovable)."""
-    return func.args.kwarg is not None
+def has_star_parameter(func: FunctionNode) -> bool:
+    """Whether the signature has ``*args`` or ``**kwargs``.
+
+    Either can receive a documented name that is not declared, so such a name's absence is
+    not provable (ADR-0007 Amendment 6 A).
+    """
+    return func.args.kwarg is not None or func.args.vararg is not None
 
 
 def set_default(source: str, qualname: str, param: str, new_text: str) -> str | None:

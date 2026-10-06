@@ -246,6 +246,7 @@ class TestWhichEditsApply:
     DOC = '    """Doc.\n\n    Args:\n        a (int): A. Defaults to 1.\n    """\n'
     PLAIN = f'def f(a: int = 1, b: str = "x"):\n{DOC}    return a\n'
     KWARGS = f"def f(a: int = 1, **kwargs):\n{DOC}    return a\n"
+    STAR_ARGS = f"def f(a: int = 1, *args):\n{DOC}    return a\n"
 
     @pytest.mark.parametrize("category", ["code_param_renamed", "docs_param_invented"])
     def test_a_missing_parameter_is_injected_when_nothing_could_absorb_it(
@@ -262,6 +263,7 @@ class TestWhichEditsApply:
         # injecting here would count a by-design abstention as a miss.
         built = sd.build(category, candidate(), set(), 1)
         assert built is not None and built.edit(self.KWARGS) is None
+        assert built.edit(self.STAR_ARGS) is None
 
     def test_an_undocumented_control_skips_every_fact_the_docstring_states(self) -> None:
         both = {"py:p.m.f#param.a.default", "py:p.m.f#param.b.default"}

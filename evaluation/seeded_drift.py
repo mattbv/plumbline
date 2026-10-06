@@ -358,10 +358,10 @@ def _guard_deprecation(source: str, qualname: str, make: Callable[[], str | None
 
 
 def _guard_kwargs(source: str, qualname: str, make: Callable[[], str | None]) -> str | None:
-    """Run ``make`` only if no ``**kwargs`` could absorb a parameter that "went missing"."""
+    """Run ``make`` only if no ``*args``/``**kwargs`` could absorb a "missing" parameter."""
     tree = _parse(source)
     func = None if tree is None else m.find_function(tree, qualname)
-    return None if func is None or m.has_var_keyword(func) else make()
+    return None if func is None or m.has_star_parameter(func) else make()
 
 
 # --- the run ---------------------------------------------------------------------------
