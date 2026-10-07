@@ -542,6 +542,20 @@ A docstring template placeholder (`DATA_PARAMETER_PLACEHOLDER`, filled in by a d
 was one finding, in one project's convention. A rule for it would be shaped to that project, and
 one instance does not show it recurs. It is recorded as a known limit.
 
+### What implementing it showed
+
+- **The rules did what they were written to.** On the packages they were derived from, the 16
+  false positives went and nothing else changed, except two real findings on `rich` (stale doc names
+  for a parameter that `*args` receives), which is the stated cost.
+- **They barely touched the fresh set.** Of 192 findings on five packages baselined beforehand, the
+  rules removed 8. 44 of the remaining 184 are false, from four further causes (a section
+  underlined with `=`; comma-separated alternative types; a deprecation note about a usage, or a class
+  that warns from `__init__`; five single cases) and 79 are narrower-docs findings. See
+  [the report](../precision-on-three-packages.md).
+- **Two questions are policy and not defect.** Whether docs naming a subtype of the annotation
+  (`dict` for `Mapping`) are drift, and whether the `| None` in a sentinel-default parameter's type
+  is. Neither is decided here.
+
 ### How it will be verified
 
 1. Unit tests per rule and a zoo scenario per cause, each with the neighbouring case that must

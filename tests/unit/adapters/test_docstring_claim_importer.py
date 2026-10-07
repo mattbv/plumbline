@@ -438,6 +438,54 @@ class TestDeprecation:
         source = f'def f():\n    """Assign.\n\n    .. deprecated:: 3.0.0\n        {note}\n    """\n'
         assert claims(source)[(F, "deprecated")] == "true"
 
+    @pytest.mark.parametrize(
+        "note",
+        [
+            "The *axis* parameter is now optional.",
+            "The `copy` keyword is ignored.",
+            "The axis argument is pending-deprecated.",
+            "The *copy* option no longer has an effect.",
+            "the **kwargs** parameter is ignored",
+        ],
+    )
+    def test_a_note_that_names_the_parameter_is_about_the_parameter(self, note: str) -> None:
+        directive = f".. deprecated:: 3.11\n        {note}"
+        source = f'def f(axis=None):\n    """Assign.\n\n    {directive}\n    """\n'
+        assert not [k for k in claims(source) if k[1] == "deprecated"]
+
+    def test_a_blank_line_between_the_directive_and_its_note_changes_nothing(self) -> None:
+        """The usual numpydoc layout; the first version read it as having no note."""
+        source = (
+            'def f(axis=None):\n    """Assign.\n\n    Notes\n    -----\n'
+            "    .. deprecated:: 3.11\n\n       The *axis* parameter is now optional.\n"
+            '    """\n'
+        )
+        assert not [k for k in claims(source) if k[1] == "deprecated"]
+
+    def test_a_blank_line_before_an_ordinary_note_still_deprecates_the_function(self) -> None:
+        source = (
+            'def f():\n    """Assign.\n\n    .. deprecated:: 3.11\n\n       Use g instead.\n'
+            '    """\n'
+        )
+        assert claims(source)[(F, "deprecated")] == "true"
+
+    def test_a_directive_followed_by_a_section_is_not_mistaken_for_having_a_note(self) -> None:
+        source = (
+            'def f():\n    """Assign.\n\n    .. deprecated:: 3.11\n\n    Parameters\n'
+            '    ----------\n    """\n'
+        )
+        assert claims(source)[(F, "deprecated")] == "true"
+
+    @pytest.mark.parametrize(
+        "note", ["The function is replaced by g.", "The old behaviour is gone.", "These are gone."]
+    )
+    def test_notes_that_do_not_name_a_parameter_still_deprecate_the_function(
+        self, note: str
+    ) -> None:
+        directive = f".. deprecated:: 3.11\n        {note}"
+        source = f'def f():\n    """Assign.\n\n    {directive}\n    """\n'
+        assert claims(source)[(F, "deprecated")] == "true"
+
     def test_a_top_level_directive_with_no_text_still_counts(self) -> None:
         source = 'def f():\n    """Assign.\n\n    .. deprecated:: 3.0.0\n    """\n'
         assert claims(source)[(F, "deprecated")] == "true"

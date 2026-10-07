@@ -68,7 +68,10 @@ _SPHINX_FIELD = re.compile(
     r"(?P<rest>[^:]*):\s*(?P<text>.*)$"
 )
 _DIRECTIVE = re.compile(r"^\.\.\s+deprecated::")
-_KEYWORD_NOTE = re.compile(r"^this\s+(?:keyword|parameter|argument|option)\b", re.IGNORECASE)
+_KEYWORD_NOTE = re.compile(
+    r"^(?:this|the)\s+(?:[*`]{0,2}\w+[*`]{0,2}\s+)?(?:keyword|parameter|argument|option)\b",
+    re.IGNORECASE,
+)
 _DEFAULT = re.compile(
     # A `default` touching a quotation mark is a value ("default", "left"), not the keyword.
     r"(?<![\"'`])\bdefaults?\b(?![\"'`])\s*(?:to|is|=|:)?\s*"
@@ -314,19 +317,19 @@ def _sphinx(lines: list[str], facts: _DocFacts) -> None:
 
 
 def _deprecates_the_symbol(docstring: str) -> bool:
-    """Whether a ``.. deprecated::`` directive is about the symbol itself (ADR-0007 Amendment 5).
+    """Whether a ``.. deprecated::`` directive is about the symbol (ADR-0007 Amendments 5 and 6).
 
     It must be at the docstring's top level: indented inside a parameter or any other block it
-    deprecates that keyword. One that begins "This keyword/parameter/argument/option" at the
-    top level is also about a keyword. Ignoring a directive can only remove a claim.
+    deprecates that keyword. Its note is the first non-empty line after it, indented or not (a
+    blank line often comes first); if that begins "This/The [name] keyword/parameter/argument/
+    option" the directive is about a parameter. Ignoring a directive can only remove a claim.
     """
     lines = docstring.splitlines()
     for i, line in enumerate(lines):
         if not _DIRECTIVE.match(line):
             continue
         note = next((ln.strip() for ln in lines[i + 1 :] if ln.strip()), "")
-        indented = i + 1 < len(lines) and lines[i + 1].startswith((" ", "\t")) and note
-        if not (indented and _KEYWORD_NOTE.match(note)):
+        if not _KEYWORD_NOTE.match(note):
             return True
     return False
 

@@ -842,6 +842,78 @@ DEFAULT_SENTINEL = _typed_scenario(
 )  # fmt: skip
 
 
+STAR_ARGS_DOCUMENTED = _typed_scenario(
+    "star_args_documented",
+    "Docs name parameters that `*args` receives, beside a function with no `*args`",
+    '''
+    def pts_to_midstep(x, *args):
+        """Convert to midstep.
+
+        Args:
+            x (list): The x values.
+            y1 (list): A y array, received through ``*args``.
+        """
+
+    def plain(x):
+        """Plain.
+
+        Args:
+            x (list): The x values.
+            y1 (list): This parameter does not exist.
+        """
+    ''',
+    (
+        ("m.pts_to_midstep", "param.y1.exists", Outcome.ABSTAIN, None, "true", None,
+         "A documented name may be what `*args` receives: its absence is not provable."),
+        ("m.plain", "param.y1.exists", Outcome.CONTRADICT, "false", "true",
+         DriftClass.DOC_VS_CODE, "With no `*args` or `**kwargs` the absence is provable."),
+    ),
+)  # fmt: skip
+
+DEPRECATION_HELPERS = _typed_scenario(
+    "deprecation_helpers",
+    "Deprecation through a helper, and a note that is about a parameter",
+    '''
+    def leading(x):
+        """Old.
+
+        .. deprecated:: 3.10
+            Use new.
+        """
+        _api.warn_deprecated("3.10", message="old")
+        return x
+
+    def conditional(x):
+        """Sometimes old.
+
+        .. deprecated:: 3.10
+            Use new.
+        """
+        if x:
+            _api.warn_deprecated("3.10", message="old")
+        return x
+
+    def parameter_note(axis=None):
+        """Assign.
+
+        Notes
+        -----
+        .. deprecated:: 3.11
+
+           The *axis* parameter is now optional.
+        """
+    ''',
+    (
+        ("m.leading", "deprecated", Outcome.CORROBORATE, "true", "true", None,
+         "A leading call to a helper whose name says it deprecates is a marker."),
+        ("m.conditional", "deprecated", Outcome.ABSTAIN, None, "true", None,
+         "A deprecation helper somewhere in the body: we cannot say 'not deprecated'."),
+        ("m.parameter_note", "deprecated", Outcome.UNDOCUMENTED, "false", None, None,
+         "A blank line before the note changes nothing: it is about the `axis` parameter."),
+    ),
+)  # fmt: skip
+
+
 SCENARIOS: tuple[Scenario, ...] = (
     SIG_CHANGE_DOCS_UPDATED,
     SIG_CHANGE_DOCS_STALE,
@@ -861,6 +933,8 @@ SCENARIOS: tuple[Scenario, ...] = (
     DEFAULT_NONE_ALLOWS_NONE,
     TYPE_LOOSER_DOCS,
     DEFAULT_SENTINEL,
+    STAR_ARGS_DOCUMENTED,
+    DEPRECATION_HELPERS,
     REQUIRES_PYTHON_BUMP,
     DRIFT_PERSISTS,
 )
