@@ -309,14 +309,28 @@ def docstring_set_default(value: str, param: str, new_text: str) -> str | None:
     return "\n".join(lines)
 
 
+def _first_top_level_comma(text: str) -> int | None:
+    """The index of the first comma that is not inside brackets, or ``None``."""
+    depth = 0
+    for i, char in enumerate(text):
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            return i
+    return None
+
+
 def docstring_set_param_type(value: str, param: str, new_type: str) -> str | None:
     """Change the type in ``param (type): ...``."""
     pattern = re.compile(rf"^(\s+{re.escape(param)}\s*\()([^)]*)(\)\s*:)", re.MULTILINE)
     match = pattern.search(value)
     if match is None:
         return None
-    parts = match[2].split(",", 1)
-    rest = "," + parts[1] if len(parts) > 1 else ""
+    field = match[2]
+    cut = _first_top_level_comma(field)
+    rest = "" if cut is None else field[cut:]
     return value[: match.start(2)] + new_type + rest + value[match.end(2) :]
 
 
