@@ -21,10 +21,10 @@ class TestWhatIsReported:
         [
             ("int", "str"),
             ("list[int]", "list[str]"),
-            ("Iterable[int]", "List[int]"),
+            ("list[int]", "dict[int, int]"),
             ("dict[str, int]", "dict[int, str]"),
             ("int | str", "int | bytes"),
-            ("float", "int"),
+            ("float", "bytes"),
             ("bool", "str"),
         ],
     )
@@ -180,24 +180,20 @@ class TestDocsThatAreLooserThanTheCode:
     @pytest.mark.parametrize(
         ("code", "doc"),
         [
-            ("Sequence[Hashable]", "list"),  # docs narrower than the code accepts
-            ("Iterable[int]", "list[int]"),
-            ("Hashable", "str"),
-            ("float", "int"),
-            ("Mapping[str, int]", "dict[str, int]"),
             ("list[str]", "Sequence[int]"),  # a supertype, but of something else
             ("list[str]", "Iterable[bytes]"),
             ("int", "Sequence[int]"),  # not a supertype of int
             ("str", "Mapping"),
+            ("list[str]", "dict[str, int]"),
+            ("Mapping[str, None | str]", "dict[str, str]"),  # narrower, but the arguments differ
         ],
     )
-    def test_docs_that_are_narrower_or_unrelated_are_still_reported(
-        self, code: str, doc: str
-    ) -> None:
+    def test_docs_that_are_unrelated_are_still_reported(self, code: str, doc: str) -> None:
         assert provable(code, doc)
 
     def test_docs_covering_only_part_of_a_union_in_the_code_are_still_reported(self) -> None:
         assert provable("list[int] | int", "Sequence[int]")
+        assert provable("list[int] | str", "Sequence[bytes]")
 
     def test_looser_docs_that_omit_none_the_code_allows_are_still_reported(self) -> None:
         """PRD §14 #10 still holds: `Sequence[str]` says nothing about None."""
@@ -206,6 +202,71 @@ class TestDocsThatAreLooserThanTheCode:
     def test_a_top_type_in_the_docs_already_covers_none(self) -> None:
         assert not provable("str | None", "object")
         assert not provable("str | None", "Any")
+
+
+class TestDocsThatAreNarrowerThanTheCode:
+    """ADR-0007 Amendment 7 A: documenting a subtype is less than the code accepts, not wrong."""
+
+    @pytest.mark.parametrize(
+        ("code", "doc"),
+        [
+            ("Mapping[Any, Any]", "dict"),
+            ("Mapping[Any, Any] | None", "None | dict"),
+            ("None | Sequence[Hashable]", "None | list"),
+            ("Iterable[float] | None", "None | tuple"),
+            ("Sequence[Hashable]", "list"),
+            ("Iterable[int]", "list[int]"),
+            ("Hashable", "str"),
+            ("float", "int"),
+            ("Mapping[str, int]", "dict[str, int]"),
+            ("MutableMapping[str, object]", "dict"),
+            ("Mapping[Any, bool] | bool", "bool"),  # the docs name only part of the union
+            ("Any | bytes | str", "str"),
+            ("Any", "int"),  # a top type in the code accepts anything the docs name
+            ("object", "list[str]"),
+            ("Mapping[Any, Any] | Sequence[int]", "dict | list"),
+        ],
+    )
+    def test_docs_naming_a_subtype_or_part_of_the_union_abstain(self, code: str, doc: str) -> None:
+        assert not provable(code, doc)
+
+    def test_docs_that_name_a_member_the_code_does_not_accept_are_still_reported(self) -> None:
+        assert provable("Mapping[Any, Any]", "dict | list")
+        assert provable("int", "str")
+        assert provable("list[int] | int", "Sequence[int]")
+
+    def test_narrower_docs_that_omit_a_none_the_code_allows_are_still_reported(self) -> None:
+        """PRD §14 #10 still holds: `dict` says nothing about None."""
+        assert provable("Mapping[Any, Any] | None", "dict")
+        assert provable("None | Sequence[int]", "list")
+
+
+class TestNoneOfASentinelParameter:
+    """ADR-0007 Amendment 7 B: where None is only the sentinel, the docs need not name it."""
+
+    def test_docs_that_omit_none_are_reported_without_a_sentinel(self) -> None:
+        assert typecompare.is_provable_difference(canon("bool | None"), canon("bool"))
+
+    def test_but_not_where_none_is_the_sentinel(self) -> None:
+        assert not typecompare.is_provable_difference(
+            canon("bool | None"), canon("bool"), none_is_sentinel=True
+        )
+
+    def test_a_real_difference_is_still_reported_beside_a_sentinel(self) -> None:
+        assert typecompare.is_provable_difference(
+            canon("int | None"), canon("str"), none_is_sentinel=True
+        )
+
+    def test_narrower_docs_and_a_sentinel_together_abstain(self) -> None:
+        assert not typecompare.is_provable_difference(
+            canon("Mapping[Any, Any] | None"), canon("dict"), none_is_sentinel=True
+        )
+
+    def test_the_flag_reaches_the_several_claims_rule(self) -> None:
+        code = canon("bool | None")
+        assert typecompare.should_abstain(code, ["bool"], none_is_sentinel=True)
+        assert not typecompare.should_abstain(code, ["bool"])
+        assert not typecompare.should_abstain(code, ["str"], none_is_sentinel=True)
 
 
 class TestSentinelDefaults:

@@ -99,19 +99,16 @@ class Projector:
             if documented:
                 claim = self._projection(commit, symbol_key, aspect, cache)
                 if claim is not None and typecompare.is_type_aspect(aspect):
-                    stated = [
-                        c.value
-                        for c in present
-                        if c.author != PROJECTOR_PRINCIPAL and c.claim_id not in changes.retracting
-                    ] + changes.asserting.get(fact_key, [])
-                    if typecompare.should_abstain(claim.raw_value, stated):
-                        claim = None  # a difference we cannot prove is not drift (ADR-0007 A3/A4)
+                    sentinel = self._none_is_sentinel(symbol_key, aspect, changes, cache)
+                    stated = self._stated(present, fact_key, changes)
+                    if typecompare.should_abstain(
+                        claim.raw_value, stated, none_is_sentinel=sentinel
+                    ):
+                        claim = (
+                            None  # a difference we cannot prove is not drift (ADR-0007 A3/A4/A7)
+                        )
                 if claim is not None and typecompare.is_default_aspect(aspect):
-                    stated = [
-                        c.value
-                        for c in present
-                        if c.author != PROJECTOR_PRINCIPAL and c.claim_id not in changes.retracting
-                    ] + changes.asserting.get(fact_key, [])
+                    stated = self._stated(present, fact_key, changes)
                     if typecompare.should_abstain_default(claim.raw_value, stated):
                         claim = None  # a None default is a sentinel (ADR-0007 Amendment 5 D)
                 if claim is None:
@@ -124,6 +121,31 @@ class Projector:
             if retract or assert_:
                 steps.append(ProjectionStep(fact_key, retract, assert_))
         return ProjectionPlan(steps, abstained)
+
+    @staticmethod
+    def _stated(present: list[PresentClaim], fact_key: str, changes: DocChanges) -> list[str]:
+        """The values the docs state for a slot once this commit's changes are applied."""
+        return [
+            c.value
+            for c in present
+            if c.author != PROJECTOR_PRINCIPAL and c.claim_id not in changes.retracting
+        ] + changes.asserting.get(fact_key, [])
+
+    def _none_is_sentinel(
+        self, symbol_key: str, aspect: str, changes: DocChanges, cache: dict[str, SymbolState]
+    ) -> bool:
+        """Whether this parameter's ``None`` is a sentinel: the code defaults to ``None``, and the
+        docs state a concrete default (ADR-0007 Amendment 7 B)."""
+        if not aspect.startswith("param."):
+            return False
+        param = aspect.split(".")[1]
+        signature = self._state(symbol_key, cache).signature
+        facts = None if signature is None else signature.params.get(param)
+        if facts is None or facts.default != "None":
+            return False
+        default_key = f"{symbol_key}#param.{param}.default"
+        defaults = self._stated(self._kb.claims_on(default_key), default_key, changes)
+        return any(value != "None" for value in defaults)
 
     def _projection(
         self, commit: CommitRef, symbol_key: str, aspect: str, cache: dict[str, SymbolState]

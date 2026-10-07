@@ -322,3 +322,94 @@ class TestNoneDefaultIsASentinel:
         kb.claims[TYPE_FACT] = [doc(value="str")]
         [step] = plan(kb, [TYPE_FACT]).steps
         assert [c.raw_value for c in step.assert_] == ["int"]
+
+
+CASE_SIG = (
+    '{"param_names":["host","case"],"params":{"case":{"default":"None","type":"None | bool"}},'
+    '"v":1}'
+)
+CASE_TYPE = "py:pkg.m.f#param.case.type"
+CASE_DEFAULT = "py:pkg.m.f#param.case.default"
+
+
+class TestNoneOfASentinelParameter:
+    """ADR-0007 Amendment 7 B: `case: bool | None = None`, documented `bool, default: True`."""
+
+    def kb(self, signature: str = CASE_SIG) -> FakeKB:
+        kb = FakeKB()
+        kb.symbols["py:pkg.m.f"]["signature_json"] = signature
+        return kb
+
+    def test_a_concrete_documented_default_makes_the_omitted_none_silent(self) -> None:
+        kb = self.kb()
+        kb.claims[CASE_TYPE] = [doc(value="bool")]
+        kb.claims[CASE_DEFAULT] = [doc("d2", value="True")]
+        result = plan(kb, [CASE_TYPE])
+        assert result.steps == [] and result.abstained == 1
+
+    def test_without_a_documented_default_the_omitted_none_is_reported(self) -> None:
+        kb = self.kb()
+        kb.claims[CASE_TYPE] = [doc(value="bool")]
+        [step] = plan(kb, [CASE_TYPE]).steps
+        assert [c.raw_value for c in step.assert_] == ["None | bool"]
+
+    def test_a_documented_default_of_none_leaves_the_omission_reported(self) -> None:
+        kb = self.kb()
+        kb.claims[CASE_TYPE] = [doc(value="bool")]
+        kb.claims[CASE_DEFAULT] = [doc("d2", value="None")]
+        [step] = plan(kb, [CASE_TYPE]).steps
+        assert [c.raw_value for c in step.assert_] == ["None | bool"]
+
+    def test_a_documented_default_being_written_in_the_same_commit_counts(self) -> None:
+        kb = self.kb()
+        kb.claims[CASE_TYPE] = [doc(value="bool")]
+        changes = DocChanges(frozenset(), {CASE_DEFAULT: ["True"]})
+        result = plan(kb, [CASE_TYPE], changes)
+        assert result.steps == [] and result.abstained == 1
+
+    def test_a_documented_default_being_withdrawn_no_longer_counts(self) -> None:
+        kb = self.kb()
+        kb.claims[CASE_TYPE] = [doc(value="bool")]
+        kb.claims[CASE_DEFAULT] = [doc("d2", value="True")]
+        changes = DocChanges(frozenset({"d2"}), {CASE_DEFAULT: []})
+        [step] = plan(kb, [CASE_TYPE], changes).steps
+        assert [c.raw_value for c in step.assert_] == ["None | bool"]
+
+    def test_a_real_type_difference_is_still_reported_beside_a_sentinel(self) -> None:
+        kb = self.kb()
+        kb.claims[CASE_TYPE] = [doc(value="str")]
+        kb.claims[CASE_DEFAULT] = [doc("d2", value="True")]
+        [step] = plan(kb, [CASE_TYPE]).steps
+        assert [c.raw_value for c in step.assert_] == ["None | bool"]
+
+    def test_a_code_default_that_is_not_none_is_no_sentinel(self) -> None:
+        sig = (
+            '{"param_names":["host","case"],'
+            '"params":{"case":{"default":"True","type":"None | bool"}},"v":1}'
+        )
+        kb = self.kb(sig)
+        kb.claims[CASE_TYPE] = [doc(value="bool")]
+        kb.claims[CASE_DEFAULT] = [doc("d2", value="True")]
+        [step] = plan(kb, [CASE_TYPE]).steps
+        assert [c.raw_value for c in step.assert_] == ["None | bool"]
+
+    def test_the_returns_slot_is_not_read_as_a_parameter_called_type(self) -> None:
+        """`returns.type` splits as returns/type: a parameter named `type` must not leak in."""
+        kb = self.kb()
+        kb.symbols["py:pkg.m.f"]["signature_json"] = (
+            '{"param_names":["host","type"],"params":{"type":{"default":"None"}},'
+            '"returns":"None | int","v":1}'
+        )
+        kb.claims["py:pkg.m.f#param.type.default"] = [doc("d2", value="'x'")]
+        kb.claims["py:pkg.m.f#returns.type"] = [doc(value="int")]
+        [step] = plan(kb, ["py:pkg.m.f#returns.type"]).steps
+        assert [c.raw_value for c in step.assert_] == ["None | int"]
+
+    def test_the_returns_slot_has_no_parameter_and_no_sentinel(self) -> None:
+        kb = self.kb()
+        kb.symbols["py:pkg.m.f"]["signature_json"] = (
+            '{"param_names":["host"],"params":{},"returns":"None | int","v":1}'
+        )
+        kb.claims["py:pkg.m.f#returns.type"] = [doc(value="int")]
+        [step] = plan(kb, ["py:pkg.m.f#returns.type"]).steps
+        assert [c.raw_value for c in step.assert_] == ["None | int"]
