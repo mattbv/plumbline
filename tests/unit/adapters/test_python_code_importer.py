@@ -777,3 +777,72 @@ class TestProperties:
     def test_a_method_is_not_a_property(self) -> None:
         facts = extract("class C:\n    def edges(self, n: int = 1) -> int: ...\n")
         assert facts[("py:pkg.mod.C.edges", "param.n.default")] == "1"
+
+
+class TestDeprecationOfClassesAndByMessage:
+    """ADR-0004 Amendment 5: through ``__init__``, and through what a call's message says."""
+
+    @pytest.mark.parametrize(
+        "init_body",
+        [
+            "sympy_deprecation_warning('The Body class is deprecated', since='1.13')",
+            "warnings.warn('Body is deprecated', DeprecationWarning)",
+            "import warnings\n        warnings.warn('use Other instead; this is deprecated', X)",
+        ],
+    )
+    def test_a_class_that_warns_from_init_is_deprecated(self, init_body: str) -> None:
+        facts = extract(f"class Body:\n    def __init__(self):\n        {init_body}\n")
+        assert facts[("py:pkg.mod.Body", "deprecated")] == "true"
+
+    def test_a_class_whose_init_warns_after_other_work_is_unstated(self) -> None:
+        source = (
+            "class Body:\n    def __init__(self, x):\n        self.x = x\n"
+            "        if x:\n            warnings.warn('x is deprecated', DeprecationWarning)\n"
+        )
+        assert ("py:pkg.mod.Body", "deprecated") not in extract(source)
+
+    def test_a_class_with_a_plain_init_is_not_deprecated(self) -> None:
+        facts = extract("class Body:\n    def __init__(self, x):\n        self.x = x\n")
+        assert facts[("py:pkg.mod.Body", "deprecated")] == "false"
+
+    def test_a_class_with_no_init_is_judged_by_its_decorators_alone(self) -> None:
+        assert extract("class Body: ...")[("py:pkg.mod.Body", "deprecated")] == "false"
+
+    def test_a_deprecation_in_another_method_does_not_deprecate_the_class(self) -> None:
+        source = (
+            "class Body:\n    def __init__(self):\n        self.x = 1\n"
+            "    def old(self):\n        warnings.warn('old is deprecated', DeprecationWarning)\n"
+        )
+        assert extract(source)[("py:pkg.mod.Body", "deprecated")] == "false"
+
+    def test_a_class_decorated_with_deprecated_is_still_deprecated(self) -> None:
+        facts = extract("@deprecated('x')\nclass Body:\n    def __init__(self): ...\n")
+        assert facts[("py:pkg.mod.Body", "deprecated")] == "true"
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "emit_user_level_warning('cftime_range() is deprecated, please use date_range')",
+            "log.warning('this function is DEPRECATED')",
+            "notify(f'{name} is deprecated')",
+            "report('old ' 'is deprecated')",
+        ],
+    )
+    def test_a_leading_call_whose_message_says_deprecated_is_a_notice(self, call: str) -> None:
+        facts = extract(f'def f(name):\n    """Doc."""\n    {call}\n    return 1\n')
+        assert facts[("py:pkg.mod.f", "deprecated")] == "true"
+
+    def test_the_same_call_after_the_start_leaves_it_unstated(self) -> None:
+        source = "def f(x):\n    y = x\n    log.warning('this is deprecated')\n    return y\n"
+        assert ("py:pkg.mod.f", "deprecated") not in extract(source)
+
+    @pytest.mark.parametrize(
+        "call", ["log.warning('careful')", "notify(f'{name} changed')", "emit('value', 3)"]
+    )
+    def test_a_message_that_does_not_say_deprecated_is_not_a_notice(self, call: str) -> None:
+        facts = extract(f"def f(name):\n    {call}\n    return 1\n")
+        assert facts[("py:pkg.mod.f", "deprecated")] == "false"
+
+    def test_a_call_with_no_string_argument_is_not_a_notice(self) -> None:
+        facts = extract("def f(x):\n    check(x, 3)\n    return x\n")
+        assert facts[("py:pkg.mod.f", "deprecated")] == "false"
