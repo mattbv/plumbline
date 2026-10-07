@@ -668,8 +668,8 @@ TYPE_RESOLVED_DISAGREEMENT = _typed_scenario(
     (
         ("m.total", "param.count.type", Outcome.CONTRADICT, "int", "str", DriftClass.DOC_VS_CODE,
          "int against str is a provable disagreement."),
-        ("m.total", "param.ids.type", Outcome.CONTRADICT, "Iterable[int]", "list[int]",
-         DriftClass.DOC_VS_CODE, "The docs promise a list; the code accepts any iterable."),
+        ("m.total", "param.ids.type", Outcome.ABSTAIN, "Iterable[int]", "list[int]", None,
+         "Documenting a list for an Iterable promises less than the code accepts (Amendment 7 A)."),
     ),
 )  # fmt: skip
 
@@ -816,8 +816,8 @@ TYPE_LOOSER_DOCS = _typed_scenario(
          "object is a supertype of Hashable: less specific, not wrong."),
         ("m.f", "param.items.type", Outcome.ABSTAIN, "list[str]", "Sequence[str]", None,
          "Sequence[str] is a supertype of list[str]."),
-        ("m.f", "param.rows.type", Outcome.CONTRADICT, "Sequence[str]", "list",
-         DriftClass.DOC_VS_CODE, "The docs promise a list; the code accepts any sequence."),
+        ("m.f", "param.rows.type", Outcome.ABSTAIN, "Sequence[str]", "list", None,
+         "Documenting a list for a Sequence promises less than the code accepts (Amendment 7 A)."),
     ),
 )  # fmt: skip
 
@@ -914,6 +914,151 @@ DEPRECATION_HELPERS = _typed_scenario(
 )  # fmt: skip
 
 
+NARROW_DOCS = _typed_scenario(
+    "narrow_docs",
+    "Docs name `dict` where the code accepts any `Mapping`, beside real disagreements",
+    '''
+    from typing import Any, Mapping
+
+    def sel(indexers: Mapping[Any, Any], opts: Mapping[Any, Any] | None, kind: int) -> None:
+        """Select.
+
+        Args:
+            indexers (dict): The indexers.
+            opts (dict): The options.
+            kind (str): The kind.
+        """
+    ''',
+    (
+        ("m.sel", "param.indexers.type", Outcome.ABSTAIN, "Mapping[Any, Any]", "dict", None,
+         "`dict` for a `Mapping` promises less than the code accepts: not provably wrong."),
+        ("m.sel", "param.opts.type", Outcome.CONTRADICT,
+         "Mapping[Any, Any] | None", "dict", DriftClass.DOC_VS_CODE,
+         "Narrower docs that also omit the None the code allows are still PRD §14#10."),
+        ("m.sel", "param.kind.type", Outcome.CONTRADICT, "int", "str", DriftClass.DOC_VS_CODE,
+         "A genuine disagreement is still reported."),
+    ),
+)  # fmt: skip
+
+SENTINEL_TYPE = _typed_scenario(
+    "sentinel_type",
+    "`case: bool | None = None` documented `bool, default True`: the None is the sentinel",
+    '''
+    def match(case: bool | None = None, flag: bool | None = None) -> None:
+        """Match.
+
+        Args:
+            case (bool): Whether to match case. Defaults to True.
+            flag (bool): A flag.
+        """
+    ''',
+    (
+        ("m.match", "param.case.type", Outcome.ABSTAIN, "None | bool", "bool", None,
+         "The None is the sentinel for the documented default of True (Amendment 7 B)."),
+        ("m.match", "param.case.default", Outcome.ABSTAIN, "None", "True", None,
+         "A None default behind a documented effective default (Amendment 5 D)."),
+        ("m.match", "param.flag.type", Outcome.CONTRADICT,
+         "None | bool", "bool", DriftClass.DOC_VS_CODE,
+         "No documented default: the docs omit a None the code allows (PRD §14#10)."),
+    ),
+)  # fmt: skip
+
+NUMPY_SECTION_FORMS = _typed_scenario(
+    "numpy_section_forms",
+    "NumPy docstrings written with `=` underlines, alternatives, and shorthand names",
+    '''
+    def fit(loc, lower=None, axis=None, plot_kws=None):
+        """Fit.
+
+        Parameters
+        ----------
+        loc : int
+            Where.
+        lower : tuple, None
+            The lower bound.
+        axis : None, int, or tuple of int, optional
+            The axis.
+        {plot, grid}_kws : dicts
+            Keyword arguments.
+
+        Returns
+        =======
+        Symbol
+            The result.
+        """
+
+    def stats(x):
+        """Stats.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        mean, median, stddev : float
+            The values.
+        """
+        return x, x, x
+    ''',
+    (
+        ("m.fit", "param.loc.exists", Outcome.CORROBORATE, "true", "true", None, "A plain entry."),
+        ("m.fit", "param.Symbol.exists", Outcome.UNDOCUMENTED, "false", None, None,
+         "A heading underlined with `=` ends the section: Symbol is not a parameter."),
+        ("m.fit", "param.plot.exists", Outcome.UNDOCUMENTED, "false", None, None,
+         "`{plot, grid}_kws` is shorthand, not a parameter named plot."),
+        ("m.fit", "param.axis.type", Outcome.UNDOCUMENTED, None, None, None,
+         "An alternative that is not a type (`tuple of int`): no type is claimed."),
+        ("m.stats", "param.None.exists", Outcome.UNDOCUMENTED, "false", None, None,
+         "A Parameters section reading None has no parameters."),
+        ("m.stats", "returns.type", Outcome.UNDOCUMENTED, None, None, None,
+         "Several names before the colon: three values, not one float."),
+    ),
+)  # fmt: skip
+
+DEPRECATION_USAGE_AND_INIT = _typed_scenario(
+    "deprecation_usage_and_init",
+    "A note about a usage, a class that warns from `__init__`, and a notice by message",
+    '''
+    def integrate(f):
+        """Integrate.
+
+        .. deprecated:: 1.6
+
+           Using integrate() with Poly is deprecated. Use Poly.integrate instead.
+        """
+
+    class Body:
+        """A body.
+
+        .. deprecated:: 1.13
+            The Body class is deprecated.
+        """
+
+        def __init__(self, name):
+            sympy_deprecation_warning("The Body class is deprecated", since="1.13")
+            self.name = name
+
+    def old(x):
+        """Old.
+
+        .. deprecated:: 2025.2
+            Use new.
+        """
+        emit_user_level_warning("old() is deprecated, please use new")
+        return x
+    ''',
+    (
+        ("m.integrate", "deprecated", Outcome.UNDOCUMENTED, "false", None, None,
+         "The directive is about a way of calling, not the symbol."),
+        ("m.Body", "deprecated", Outcome.CORROBORATE, "true", "true", None,
+         "A class that warns from `__init__` is deprecated."),
+        ("m.old", "deprecated", Outcome.CORROBORATE, "true", "true", None,
+         "A leading call whose message says deprecated is a notice, whatever it is called."),
+    ),
+)  # fmt: skip
+
+
 SCENARIOS: tuple[Scenario, ...] = (
     SIG_CHANGE_DOCS_UPDATED,
     SIG_CHANGE_DOCS_STALE,
@@ -935,6 +1080,10 @@ SCENARIOS: tuple[Scenario, ...] = (
     DEFAULT_SENTINEL,
     STAR_ARGS_DOCUMENTED,
     DEPRECATION_HELPERS,
+    NARROW_DOCS,
+    SENTINEL_TYPE,
+    NUMPY_SECTION_FORMS,
+    DEPRECATION_USAGE_AND_INIT,
     REQUIRES_PYTHON_BUMP,
     DRIFT_PERSISTS,
 )
