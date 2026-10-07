@@ -646,3 +646,280 @@ class TestClaimShape:
     def test_the_fact_key_joins_symbol_and_aspect(self) -> None:
         claim = extraction(self.SOURCE).claims[0]
         assert claim.fact_key == f"{claim.symbol_key}#{claim.aspect}"
+
+
+def section(title: str, underline: str, body: str, args: str = "x") -> str:
+    """A function whose docstring is one NumPy section; ``body`` is indented to the section."""
+    return f'def f({args}):\n    """Do.\n\n    {title}\n    {underline}\n{body}    """\n'
+
+
+class TestNumpySectionUnderlines:
+    """ADR-0007 Amendment 7 C: a heading may be underlined with any one punctuation character."""
+
+    @pytest.mark.parametrize("underline", ["---", "====", "~~~~", "^^^^", "####"])
+    def test_any_underline_closes_the_parameters_section(self, underline: str) -> None:
+        source = (
+            'def f(loc):\n    """Do.\n\n    Parameters\n    ----------\n'
+            "    loc : int\n        Where.\n\n    Returns\n"
+            f'    {underline}\n    Symbol\n        The thing.\n    """\n'
+        )
+        facts = claims(source)
+        assert (F, "param.loc.exists") in facts
+        assert [k for k in facts if k[1].startswith("param.") and "loc" not in k[1]] == []
+
+    def test_text_after_an_equals_underlined_heading_is_not_read_as_parameters(self) -> None:
+        source = (
+            'def f(loc):\n    """Do.\n\n    Parameters\n    ----------\n'
+            "    loc : int\n        Where.\n\n    Returns\n    =======\n    Symbol\n"
+            "        The thing.\n\n    Examples\n    ========\n    r10\n        Not a parameter.\n"
+            '    """\n'
+        )
+        params = {k[1] for k in claims(source) if k[1].startswith("param.")}
+        assert params == {"param.loc.exists", "param.loc.type"}
+
+    def test_a_short_run_is_not_an_underline(self) -> None:
+        source = (
+            'def f(x):\n    """Do.\n\n    Parameters\n    ==\n    x : int\n        One.\n    """\n'
+        )
+        assert (F, "param.x.exists") not in claims(source)
+
+    def test_a_mixed_run_is_not_an_underline(self) -> None:
+        source = section("Parameters", "-=-=-", "    x : int\n        One.\n")
+        assert (F, "param.x.exists") not in claims(source)
+
+    def test_the_dash_underline_still_works(self) -> None:
+        source = section("Parameters", "----------", "    x : int\n        One.\n")
+        assert claims(source)[(F, "param.x.type")] == "int"
+
+
+class TestTypeFieldAlternatives:
+    """ADR-0007 Amendment 7 D: a type field is a union of alternatives, plus qualifiers."""
+
+    @staticmethod
+    def type_of(field: str) -> str | None:
+        source = section("Parameters", "----------", f"    x : {field}\n        One.\n")
+        return claims(source).get((F, "param.x.type"))
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("tuple, None", "None | tuple"),
+            ("int, str", "int | str"),
+            ("int, or str", "int | str"),
+            ("list, None, optional (default None)", "None | list"),
+            ("int, optional (default 3)", "None | int"),
+            ("int, optional, keyword only", "None | int"),
+            ("int, keyword-only", "int"),
+            ("int, default 5", "int"),
+            ("int, defaults None", "None | int"),
+            ("dict[str, int], None", "None | dict[str, int]"),
+            ("int", "int"),
+        ],
+    )
+    def test_alternatives_and_qualifiers_are_read(self, field: str, expected: str) -> None:
+        assert self.type_of(field) == expected
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "None, int, or tuple of int, optional",
+            "array-like, shape (n,)",
+            "int or float or a very long phrase",
+        ],
+    )
+    def test_an_alternative_that_is_not_a_type_means_no_type_is_claimed(self, field: str) -> None:
+        assert self.type_of(field) is None
+
+    def test_a_default_written_inside_the_optional_qualifier_is_read(self) -> None:
+        source = section(
+            "Parameters", "----------", "    x : int, optional (default 3)\n        One.\n"
+        )
+        assert claims(source)[(F, "param.x.default")] == "3"
+
+    def test_optional_alone_still_says_nothing_about_the_type(self) -> None:
+        assert self.type_of("optional") is None
+
+    def test_google_style_alternatives_are_read_the_same_way(self) -> None:
+        source = 'def f(x):\n    """Do.\n\n    Args:\n        x (tuple, None): One.\n    """\n'
+        assert claims(source)[(F, "param.x.type")] == "None | tuple"
+
+
+class TestNumpyEntryNames:
+    """ADR-0007 Amendment 7 E and F."""
+
+    @staticmethod
+    def params(entry: str) -> set[str]:
+        source = section("Parameters", "----------", f"    {entry}\n        One.\n", "a, b")
+        return {k[1].split(".")[1] for k in claims(source) if k[1].startswith("param.")}
+
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ("a, b : int", {"a", "b"}),
+            ("a : int", {"a"}),
+            ("{plot, diag, grid}_kws : dicts", set()),
+            ("possible, provided the keyword is True (recommended).", set()),
+            ("a, not an identifier : int", set()),
+            ("x-y : int", set()),
+        ],
+    )
+    def test_an_entry_is_read_only_if_every_name_is_an_identifier(
+        self, entry: str, expected: set[str]
+    ) -> None:
+        assert self.params(entry) == expected
+
+    def test_a_parameters_section_reading_none_has_no_entries(self) -> None:
+        source = 'def f():\n    """Do.\n\n    Parameters\n    ----------\n    None\n    """\n'
+        assert not [k for k in claims(source) if k[1].startswith("param.")]
+
+    def test_a_returns_entry_with_several_names_claims_no_type(self) -> None:
+        source = (
+            'def f():\n    """Do.\n\n    Returns\n    -------\n'
+            '    mean, median, stddev : float\n        The values.\n    """\n'
+        )
+        assert (F, "returns.type") not in claims(source)
+
+    def test_a_returns_entry_with_one_name_still_claims_its_type(self) -> None:
+        source = section("Returns", "-------", "    mean : float\n        The mean.\n", "")
+        assert claims(source)[(F, "returns.type")] == "float"
+
+    def test_an_unnamed_returns_type_with_a_comma_inside_brackets_is_kept(self) -> None:
+        source = section("Returns", "-------", "    dict[str, int]\n        The map.\n", "")
+        assert claims(source)[(F, "returns.type")] == "dict[str, int]"
+
+
+class TestUsageNotes:
+    """ADR-0007 Amendment 7 G: a directive about a way of calling is not about the symbol."""
+
+    @pytest.mark.parametrize(
+        "note",
+        [
+            "Using arguments that are not Expr is deprecated.",
+            "Passing a list is deprecated.",
+            "Calling this with no arguments is deprecated.",
+            "Setting the flag is deprecated.",
+            "Configuring printing this way is deprecated.",
+            "Specifying a unit is deprecated.",
+            "Providing both is deprecated.",
+            "Supplying a callable is deprecated.",
+        ],
+    )
+    def test_a_usage_note_does_not_deprecate_the_symbol(self, note: str) -> None:
+        directive = f".. deprecated:: 1.7\n        {note}"
+        source = f'def f():\n    """Do.\n\n    {directive}\n    """\n'
+        assert not [k for k in claims(source) if k[1] == "deprecated"]
+
+    @pytest.mark.parametrize(
+        "note", ["The Body class is deprecated.", "Use g instead.", "Usage of f is discouraged."]
+    )
+    def test_other_notes_still_deprecate_the_symbol(self, note: str) -> None:
+        directive = f".. deprecated:: 1.7\n        {note}"
+        source = f'def f():\n    """Do.\n\n    {directive}\n    """\n'
+        assert claims(source)[(F, "deprecated")] == "true"
+
+
+class TestWhatCountsAsAType:
+    """Prose that merely parses must not become a type claim (found with ``array-like``)."""
+
+    @staticmethod
+    def type_of(field: str) -> str | None:
+        source = f'def f(x):\n    """Do.\n\n    Args:\n        x ({field}): One.\n    """\n'
+        return claims(source).get((F, "param.x.type"))
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "array-like",
+            "shape (n,)",
+            "int - str",
+            "len(x)",
+            "a < b",
+            "not x",
+            "a and b",
+            "int | len(x)",  # a call inside an otherwise valid union
+            "int | -x",
+            "int | (a if b else c)",
+        ],
+    )
+    def test_expressions_that_are_not_types_claim_nothing(self, field: str) -> None:
+        assert self.type_of(field) is None
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("int | None", "None | int"),
+            ("np.ndarray", "np.ndarray"),
+            ("dict[str, int]", "dict[str, int]"),
+            ("Callable[[int], str]", "Callable[[int], str]"),
+            ("Literal['a', 'b']", "Literal['a', 'b']"),
+            ("tuple[int, ...]", "tuple[int, ...]"),
+        ],
+    )
+    def test_real_types_are_still_read(self, field: str, expected: str) -> None:
+        assert self.type_of(field) == expected
+
+
+class TestRegressionsFoundByTheReReadOfEarlierPackages:
+    """Defects the amendment's own changes exposed, found by re-running packages already read."""
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("bool, False", "bool"),
+            ("int, 3", "int"),
+            ("str, 'x'", "str"),
+            ("float, 0.5", "float"),
+            ("tuple, None", "None | tuple"),  # None is a type alternative, not a value
+            ("int, True, optional", "None | int"),
+        ],
+    )
+    def test_a_literal_value_after_a_type_is_not_an_alternative(
+        self, field: str, expected: str
+    ) -> None:
+        source = section("Parameters", "----------", f"    x : {field}\n        One.\n")
+        assert claims(source)[(F, "param.x.type")] == expected
+
+    def test_a_bare_list_of_types_with_no_description_is_not_an_entry(self) -> None:
+        source = section(
+            "Parameters", "==========", "\n    Point3D, Line3D, Plane, tuple, list\n\n", "other"
+        )
+        assert not [k for k in claims(source) if k[1].startswith("param.")]
+
+    def test_a_single_capitalised_word_with_no_description_is_not_an_entry(self) -> None:
+        source = section("Parameters", "----------", "    Note\n\n", "x")
+        assert not [k for k in claims(source) if k[1].startswith("param.")]
+
+    def test_a_name_with_a_description_but_no_colon_is_still_an_entry(self) -> None:
+        source = section("Parameters", "----------", "    x\n        The value.\n")
+        assert (F, "param.x.exists") in claims(source)
+
+    def test_a_pair_of_names_with_a_description_is_still_two_entries(self) -> None:
+        source = section("Parameters", "----------", "    a, b\n        Both.\n", "a, b")
+        facts = claims(source)
+        assert (F, "param.a.exists") in facts and (F, "param.b.exists") in facts
+
+    @staticmethod
+    def method_claims(body: str) -> dict[tuple[str, str], str]:
+        return claims(f"class K:\n{body}")
+
+    def test_the_receiver_is_documentable_under_its_real_name(self) -> None:
+        """`def angle_between(l1, l2)` in a class: `l1` is the receiver, documented by name."""
+        body = (
+            '    def angle_between(l1, l2):\n        """Angle.\n\n        Parameters\n'
+            "        ==========\n        l1 : Line\n        l2 : Line\n"
+            '        """\n'
+        )
+        facts = self.method_claims(body)
+        assert ("py:pkg.mod.K.angle_between", "param.l1.exists") not in facts
+        assert ("py:pkg.mod.K.angle_between", "param.l2.exists") in facts
+
+    def test_a_static_method_documents_its_first_parameter_as_usual(self) -> None:
+        body = (
+            '    @staticmethod\n    def f(a, b):\n        """F.\n\n        Parameters\n'
+            '        ----------\n        a : int\n        """\n'
+        )
+        assert ("py:pkg.mod.K.f", "param.a.exists") in self.method_claims(body)
+
+    def test_a_plain_function_documents_its_first_parameter_as_usual(self) -> None:
+        source = section("Parameters", "----------", "    a : int\n        One.\n", "a, b")
+        assert (F, "param.a.exists") in claims(source)

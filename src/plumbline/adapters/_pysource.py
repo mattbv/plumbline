@@ -189,4 +189,28 @@ def annotation_from_text(text: str) -> str | None:
         return None
     if isinstance(tree, ast.Constant) and tree.value is not None:
         return None  # a bare number or string is not a type
+    if not _is_type_expression(tree):
+        return None
     return annotation(tree)
+
+
+_TYPE_NODES = (
+    ast.Name, ast.Attribute, ast.Subscript, ast.Tuple, ast.List, ast.Constant,
+    ast.BinOp, ast.BitOr, ast.Load,
+)  # fmt: skip
+
+
+def _is_type_expression(node: ast.expr) -> bool:
+    """Whether ``node`` is made only of what a type annotation is made of.
+
+    Names, dotted names, subscripts, ``|`` unions, lists and tuples of those, and constants
+    (``None``, ``...``, forward-reference strings, ``Literal`` values). Anything else, such as
+    ``array-like`` (a subtraction), ``shape (n,)`` (a call) or a conditional expression, is prose
+    that happens to parse. A whitelist, so a kind of node nobody thought of is refused.
+    """
+    for child in ast.walk(node):
+        if not isinstance(child, _TYPE_NODES):
+            return False
+        if isinstance(child, ast.BinOp) and not isinstance(child.op, ast.BitOr):
+            return False
+    return True

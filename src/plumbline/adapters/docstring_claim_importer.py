@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import keyword
 import re
 from collections import Counter
 from collections.abc import Iterator
@@ -61,7 +62,7 @@ _GOOGLE_PARAM = re.compile(
 )
 _GOOGLE_RETURNS = re.compile(r"^(?P<type>[^:]+?)\s*:\s*(?P<desc>.*)$")
 _GOOGLE_RAISES = re.compile(r"^(?P<exc>[A-Za-z_][\w.]*)\s*:")
-_NUMPY_UNDERLINE = re.compile(r"^-{3,}\s*$")
+_NUMPY_UNDERLINE = re.compile(r"^(?:-{3,}|={3,}|~{3,}|\^{3,}|#{3,})\s*$")
 _NUMPY_ENTRY = re.compile(r"^(?P<names>[^:]+?)\s*(?::\s*(?P<type>.*))?$")
 _SPHINX_FIELD = re.compile(
     r"^:(?P<field>param|parameter|arg|argument|type|returns?|rtype|raises?|raise|except)\b"
@@ -71,6 +72,14 @@ _DIRECTIVE = re.compile(r"^\.\.\s+deprecated::")
 _KEYWORD_NOTE = re.compile(
     r"^(?:this|the)\s+(?:[*`]{0,2}\w+[*`]{0,2}\s+)?(?:keyword|parameter|argument|option)\b",
     re.IGNORECASE,
+)
+_USAGE_NOTE = re.compile(
+    r"^(?:using|passing|calling|setting|configuring|specifying|providing|supplying)\b",
+    re.IGNORECASE,
+)
+_OPTIONAL_PART = re.compile(r"^optional\s*(?:\(.*\))?$", re.IGNORECASE)
+_QUALIFIER_PART = re.compile(
+    r"^(?:keyword[- ]only|positional(?:[- ]only)?|required)$", re.IGNORECASE
 )
 _DEFAULT = re.compile(
     # A `default` touching a quotation mark is a value ("default", "left"), not the keyword.
@@ -167,21 +176,44 @@ def _default_in(text: str) -> str | None:
     return None
 
 
+def _is_literal_value(part: str) -> bool:
+    """Whether a part of a type field is a literal value (``False``, ``3``, ``'x'``), not a type.
+
+    ``None`` is a type alternative and is not a value here.
+    """
+    if part.strip() == "None":
+        return False
+    try:
+        ast.literal_eval(part.strip())
+    except (ValueError, SyntaxError):
+        return False
+    return True
+
+
 def _type_and_default(type_field: str | None) -> tuple[str | None, str | None, bool]:
-    """From ``int, optional`` or ``int, default 30``: the type, a default if stated, optional."""
+    """From ``int, optional`` or ``tuple, None, optional (default None)``: type, default, optional.
+
+    The field is split at top-level commas. ``optional`` (with or without a parenthesized
+    default), ``default X`` and ``keyword only`` are qualifiers. The rest are alternatives, joined
+    as a union; a leading ``or`` is dropped. If an alternative is not a type the joined text does
+    not parse, and no type is claimed (ADR-0007 Amendment 7 D).
+    """
     if not type_field:
         return None, None, False
-    parts = _split_top(type_field)
     default = None
     optional = False
-    if parts and parts[0].strip().lower() == "optional":
-        return None, None, True  # `x (optional)`: says nothing about the type
-    for extra in parts[1:]:
-        if extra.lower().startswith("default"):
-            default = _default_in(extra)
-        elif extra.strip().lower() == "optional":
+    alternatives: list[str] = []
+    for part in _split_top(type_field):
+        if _OPTIONAL_PART.match(part):
             optional = True
-    return (parts[0] if parts else None), default, optional
+            default = default or _default_in(part)
+        elif part.lower().startswith("default"):
+            default = _default_in(part)
+        elif _QUALIFIER_PART.match(part) or _is_literal_value(part):
+            continue  # `bool, False`: the False is a value, not a second type
+        else:
+            alternatives.append(re.sub(r"^or\s+", "", part, flags=re.IGNORECASE))
+    return (" | ".join(alternatives) if alternatives else None), default, optional
 
 
 def _google(lines: list[str], facts: _DocFacts) -> None:
@@ -248,6 +280,9 @@ def _numpy(lines: list[str], facts: _DocFacts) -> None:
             entries = _entries(body)
             if len(entries) == 1:  # several return values: abstain
                 head = entries[0][0]
+                # `mean, median, stddev : float` names three values: no single return type.
+                if ":" in head and len(_split_top(head.split(":", 1)[0])) > 1:
+                    continue
                 type_text = head.split(":", 1)[1].strip() if ":" in head else head
                 facts.returns.append((type_text, "docstring.numpy:Returns"))
         elif title == "raises":
@@ -264,8 +299,16 @@ def _numpy_params(body: list[str], facts: _DocFacts) -> None:
             continue
         type_text, typed_default, optional = _type_and_default(match["type"])
         prose = _default_in(rest)
-        for name in (n.strip() for n in match["names"].split(",")):
-            if _NAME.match(name):
+        if match["type"] is None and not rest:
+            continue  # a bare line of names with no type and no description is a list of types
+        names = [n.strip() for n in match["names"].split(",")]
+        # Every name must be a plain identifier: `{plot, diag, grid}_kws` and a wrapped line such
+        # as `possible, provided the keyword ...` are not entries (Amendment 7 E). `None` alone
+        # means the section has no parameters.
+        if not all(_NAME.match(n) and not keyword.iskeyword(n) for n in names):
+            continue
+        for name in names:
+            if True:
                 facts.params.append(
                     _Param(
                         name,
@@ -322,14 +365,15 @@ def _deprecates_the_symbol(docstring: str) -> bool:
     It must be at the docstring's top level: indented inside a parameter or any other block it
     deprecates that keyword. Its note is the first non-empty line after it, indented or not (a
     blank line often comes first); if that begins "This/The [name] keyword/parameter/argument/
-    option" the directive is about a parameter. Ignoring a directive can only remove a claim.
+    option", or a way of calling ("Using ...", "Passing ..."), the directive is not about the
+    symbol itself. Ignoring a directive can only remove a claim.
     """
     lines = docstring.splitlines()
     for i, line in enumerate(lines):
         if not _DIRECTIVE.match(line):
             continue
         note = next((ln.strip() for ln in lines[i + 1 :] if ln.strip()), "")
-        if not _KEYWORD_NOTE.match(note):
+        if not _KEYWORD_NOTE.match(note) and not _USAGE_NOTE.match(note):
             return True
     return False
 
@@ -454,6 +498,18 @@ class DocstringClaimImporter:
     def _callable_facts(definition: src.Definition, facts: _DocFacts, add) -> None:  # type: ignore[no-untyped-def]
         """Turn a function's parsed docstring into claims (parameters, returns, raises)."""
         receivers = {"self", "cls"} if definition.in_class else set()
+        node = definition.node
+        if definition.in_class and isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            # The first parameter of a method is the receiver however it is named (`def f(l1, l2)`
+            # in a class), and the code importer does not list it: documenting it by its real
+            # name is not documenting a parameter that does not exist.
+            decorators = {
+                (src.dotted(d.func if isinstance(d, ast.Call) else d) or "").rsplit(".", 1)[-1]
+                for d in node.decorator_list
+            }
+            positional = [*node.args.posonlyargs, *node.args.args]
+            if positional and "staticmethod" not in decorators:
+                receivers.add(positional[0].arg)
         for param in facts.params:
             if param.name in receivers:
                 continue
