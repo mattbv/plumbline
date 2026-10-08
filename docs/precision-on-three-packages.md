@@ -294,3 +294,96 @@ time (23, 28, 31 withheld on purpose). Ontolith: 34 of 34. One miss appeared alo
 was the harness's: it renamed a parameter in a function with `*args`, which is now unprovable by
 design. The harness's guard now covers `*args` as well as `**kwargs`.
 
+## After Amendment 7: the packages read so far, and a second set read once
+
+The rules in ADR-0007 Amendment 7 and ADR-0004 Amendment 5 (narrower docs, the `None` of a
+sentinel parameter, `=`-underlined sections, alternative types, entry names, usage notes,
+`__init__` deprecation, message-based notices) were implemented and tried twice.
+
+### Regression: the eleven packages already read, 283 findings became 169
+
+| Package | Before | After | Note |
+|---|---|---|---|
+| `boltons`, `matplotlib`, `scikit_learn`, `scipy` | 1, 5, 1, 0 | 1, 5, 1, 0 | unchanged |
+| `pandas` | 92 | 57 | narrower docs and sentinel types went |
+| `xarray` | 96 | 22 | 73 type findings and one deprecation went |
+| `astropy` | 43 | 16 | 27 type findings went |
+| `dask`, `seaborn` | 14, 2 | 9, 0 | |
+| `networkx` | 0 | 2 | two real defaults (`[-]`, `[loop]` documented against the code's `''` and `'edge_options'`), newly readable |
+| `sympy` | 29 | 56 | 23 false findings went; **50 appeared** |
+
+The 50 in `sympy` are findings that were always there and could not be seen: its docstrings
+underline sections with `=`, which the importer did not recognize, so those sections were never
+read. Of the 50, I read 49 as real stale documentation (`fp_group` for `fp_grp`, `elt` for `a`,
+`mu`/`sigma` for `mean`/`std`, `ccode`'s `standard` documented `'c89'` against a code default of
+`'c99'`) and one as a misreading (a prose line `Note` read as an entry).
+
+### Three defects that the changes themselves introduced, found by this check
+
+The first re-run showed 73 new `sympy` findings, 2 in `networkx` and 1 in `pandas`. Reading them
+found three faults in the new code: `codes_given: bool, False` became the union `bool | False`;
+a bare list of types under `Parameters` (`Point3D, Line3D, Plane, tuple, list`) was read as five
+parameters (10 findings); and a method whose first parameter is not called `self`
+(`def angle_between(l1, l2)`) had `l1` reported missing when documented by name (13 findings).
+All three are fixed, with tests. Had I not re-run the earlier packages I would have shipped them.
+
+### The second fresh set, read once: 114 findings became 67
+
+Six packages chosen and baselined before the amendment was written, with no finding read until the
+rules existed (`statsmodels`, `geopandas`, `bokeh`, `pint`, `altair`, `pyproj`). Five more
+(`scikit_image`, `docutils`, `click`, `tqdm`, `shapely`) gave no findings before or after. I read
+all 67.
+
+| Package | Findings | Real | By-design | False |
+|---|---|---|---|---|
+| `statsmodels` | 9 | 2 | 1 | 6 |
+| `geopandas` | 3 | 1 | 2 | 0 |
+| `bokeh` | 24 | 10 | 14 | 0 |
+| `pint` | 5 | 1 | 3 | 1 |
+| `altair` | 19 | 0 | 19 | 0 |
+| `pyproj` | 7 | 4 | 3 | 0 |
+| **All** | **67** | **18** | **42** | **7** |
+
+**Real** is a genuine disagreement (a stale parameter name such as `css_color` for
+`css_color_string`, a wrong default, `bytes` documented as `str`). **By-design** is the docs
+omitting a `None` the code allows with no `optional` or default stated, which PRD §14 #10 calls
+real drift; 42 of the 67 are this. **False** is a misreading: a prose label `TODO:` read as an
+entry, the word `optional` read as an entry, and five `0`/`1` defaults documented as
+`False`/`True`.
+
+Seven of 67 (10%) are false. Eighteen (27%) are clearly real, and with the by-design cases
+60 of 67 (90%) are findings the project's own definitions call true.
+
+### The trend, and what it does and does not say
+
+| Set | Read after | False findings |
+|---|---|---|
+| First three packages | nothing | 180 of 317 (57%) |
+| Held-out set 1 | Amendments 3 to 5 | 17 of 22 (77%) |
+| Fresh set 1 | Amendment 6 | 44 of 184 (24%) |
+| Fresh set 2 | Amendment 7 | 7 of 67 (10%) |
+
+Every row is a set read once, after rules written from earlier sets and not from it. The rate has
+fallen each time. It has not been zero, and each set has shown causes the previous one could not:
+the seven here include three the rules do not cover. A fourth set will very likely do the same.
+
+### What I am least sure about
+
+- Every label is mine. `docs/second-reader-sheet.md` holds 30 of the 67, with the code, the docs, the
+  signature and the docstring line and **without my labels**, for someone else to mark. The key is not
+  in the repository.
+- The 42 by-design findings are 63% of the set. They depend entirely on PRD §14 #10. A reader who
+  finds #10 too aggressive moves them out, and then 18 of 25 are real.
+- Some of those 42 are the sentinel idiom with a sentinel that is not `None`. `altair` defaults to
+  `Undefined`, and at least one finding (`transform_quantile`, `step: Optional[float] = Undefined`,
+  documented `float` with `default 0.01`) is the same case as the `None` sentinel. Amendment 7 B does
+  not cover it.
+- One package, `altair`, supplies 19 of the 42.
+
+### Recall
+
+On `rich`, three seeds: 192 provable injected drifts, all found, 0 of 60 controls reported each
+time, 25 to 27 withheld on purpose. Ontolith: 34 of 34. Two apparent misses along the way were the
+harness's: its type edit split at the first comma, so `tuple[int, int]` and `Union[None, int, str]`
+became garbage. It now splits at the first comma outside brackets.
+

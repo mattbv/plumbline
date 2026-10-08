@@ -134,31 +134,34 @@ def _is_deprecation_helper(node: ast.AST) -> bool:
     )
 
 
-def _is_deprecation_warning(call: ast.Call) -> bool:
-    """Whether ``call`` is a ``warn`` that says the code is deprecated (ADR-0004 Amendment 3).
+def _says_deprecated(call: ast.Call) -> bool:
+    """Whether a call's first string argument says "deprecated", whatever the callee is named.
 
-    The category is ``DeprecationWarning`` or ``PendingDeprecationWarning``, or it is any
-    ``*Warning`` (a project's own subclass) and the message says "deprecated".
+    A project's own ``emit_user_level_warning("f() is deprecated ...")`` is a notice by its
+    message and not by its name (ADR-0004 Amendment 5 B).
     """
-    if _is_deprecation_helper(call):
-        return True
-    if not _is_warn(call):
-        return False
-    category = _warn_category(call)
-    return category in ("DeprecationWarning", "PendingDeprecationWarning") or (
-        category.endswith("Warning") and "deprecat" in _message_text(call)
+    return "deprecat" in _message_text(call)
+
+
+def _is_deprecation_warning(call: ast.Call) -> bool:
+    """Whether ``call`` is a notice that the code is deprecated (ADR-0004 Amendments 3 to 5).
+
+    A ``warn`` with category ``DeprecationWarning`` or ``PendingDeprecationWarning``, a call to
+    a function whose name says it deprecates, or any call whose message says so.
+    """
+    return (
+        _is_deprecation_helper(call)
+        or _says_deprecated(call)
+        or (
+            _is_warn(call)
+            and _warn_category(call) in ("DeprecationWarning", "PendingDeprecationWarning")
+        )
     )
 
 
 def _mentions_deprecation(call: ast.Call) -> bool:
-    """Whether a ``warn`` call might be a deprecation notice, however it is phrased."""
-    return _is_deprecation_helper(call) or (
-        _is_warn(call)
-        and (
-            "deprecat" in _message_text(call)
-            or _warn_category(call) in ("DeprecationWarning", "PendingDeprecationWarning")
-        )
-    )
+    """Whether a call might be a deprecation notice, however it is phrased."""
+    return _is_deprecation_warning(call)
 
 
 def _decorator_names(node: _FunctionNode | ast.ClassDef) -> list[str]:
@@ -179,28 +182,46 @@ def _leading_statement(func: _FunctionNode) -> ast.stmt | None:
     return None
 
 
+def _init_of(cls: ast.ClassDef) -> _FunctionNode | None:
+    """The class's own ``__init__``, if it defines one."""
+    return next(
+        (
+            stmt
+            for stmt in cls.body
+            if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef) and stmt.name == "__init__"
+        ),
+        None,
+    )
+
+
+def _has_leading_notice(func: _FunctionNode) -> bool:
+    """Whether the first statement (after docstring and imports) is a deprecation notice."""
+    leading = _leading_statement(func)
+    return (
+        isinstance(leading, ast.Expr)
+        and isinstance(leading.value, ast.Call)
+        and _is_deprecation_warning(leading.value)
+    )
+
+
 def _deprecation(node: _FunctionNode | ast.ClassDef) -> bool | None:
     """``True`` if a deprecation marker is visible, ``False`` if provably none, else ``None``.
 
     A docstring only ever claims deprecation, so a wrong ``True`` cannot open a dispute and a
     wrong ``False`` can: the answer is ``False`` only when nothing could be hiding one (an
-    unknown decorator, or a deprecation warning somewhere other than the start of the body).
+    unknown decorator, or a deprecation notice somewhere other than the start of the body). A
+    class is judged by its decorators and by its own ``__init__`` (ADR-0004 Amendment 5 A).
     """
     names = _decorator_names(node)
     if "deprecated" in names:
         return True
-    if not isinstance(node, ast.ClassDef):
-        leading = _leading_statement(node)
-        if (
-            isinstance(leading, ast.Expr)
-            and isinstance(leading.value, ast.Call)
-            and _is_deprecation_warning(leading.value)
-        ):
-            return True
+    body = _init_of(node) if isinstance(node, ast.ClassDef) else node
+    if body is not None and _has_leading_notice(body):
+        return True
     if any(name not in _DEPRECATION_NEUTRAL_DECORATORS for name in names):
         return None
-    if not isinstance(node, ast.ClassDef) and any(
-        _mentions_deprecation(call) for call in ast.walk(node) if isinstance(call, ast.Call)
+    if body is not None and any(
+        _mentions_deprecation(call) for call in ast.walk(body) if isinstance(call, ast.Call)
     ):
         return None
     return False

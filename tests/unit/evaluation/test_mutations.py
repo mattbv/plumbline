@@ -309,3 +309,25 @@ class TestStarParameters:
     def test_args_and_kwargs_are_both_star_parameters(self, signature: str, expected: bool) -> None:
         func = m.find_function(ast.parse(signature), "f")
         assert func is not None and m.has_star_parameter(func) is expected
+
+
+class TestTypeEditsWithBracketedTypes:
+    """The type ends at the first comma *outside* brackets (it once mangled `tuple[int, int]`)."""
+
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ("line_range (tuple[int, int], optional): R.", "line_range (str, optional): R."),
+            ("indent (Union[None, int, str], optional): I.", "indent (str, optional): I."),
+            ("m (dict[str, list[int]]): M.", "m (str): M."),
+            ("x (int, optional): X.", "x (str, optional): X."),
+            ("x (int): X.", "x (str): X."),
+        ],
+    )
+    def test_the_whole_type_is_replaced_and_the_qualifiers_are_kept(
+        self, entry: str, expected: str
+    ) -> None:
+        value = f"Doc.\n\nArgs:\n    {entry}\n"
+        name = entry.split(" ", 1)[0]
+        out = m.docstring_set_param_type(value, name, "str")
+        assert out == f"Doc.\n\nArgs:\n    {expected}\n"

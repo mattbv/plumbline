@@ -187,6 +187,35 @@ def _loosened_by(code_members: list[ast.expr], doc_members: list[ast.expr]) -> b
     )
 
 
+def _narrows(code: ast.expr, doc: ast.expr) -> bool:
+    """Whether the docs' member is the code's member or a subtype of it.
+
+    Arguments must agree unless either side leaves them out (``dict`` for ``Mapping[Any, Any]``,
+    or ``Mapping`` for ``dict[str, int]``); a top type in the code covers every docs member.
+    """
+    code_head, doc_head = _head(code), _head(doc)
+    if code_head is None or doc_head is None:
+        return False
+    if code_head[0] in _TOP:
+        return True
+    if code_head[0] != doc_head[0] and code_head[0] not in _SUPERTYPES.get(doc_head[0], ()):
+        return False
+    return not code_head[1] or not doc_head[1] or _args(code) == _args(doc)
+
+
+def _narrower(code_members: list[ast.expr], doc_members: list[ast.expr]) -> bool:
+    """Whether every member the docs name is, or is a subtype of, a member of the code's type.
+
+    Documenting ``dict`` for ``Mapping[Any, Any]``, or ``bool`` for ``Mapping[Any, bool] |
+    bool``, promises less than the code accepts: true, if not complete (ADR-0007 Amendment 7 A).
+    ``None`` is set aside by the caller.
+    """
+    return bool(doc_members) and all(
+        any(ast.unparse(c) == ast.unparse(d) or _narrows(c, d) for c in code_members)
+        for d in doc_members
+    )
+
+
 def _split_none(members: list[ast.expr]) -> tuple[set[str], bool]:
     """The non-``None`` members as text, and whether ``None`` was among them."""
     texts = {ast.unparse(m) for m in members}
@@ -194,7 +223,9 @@ def _split_none(members: list[ast.expr]) -> tuple[set[str], bool]:
     return (texts - {"None"}) or {"None"}, has_none
 
 
-def is_provable_difference(code_type: str, doc_type: str) -> bool:
+def is_provable_difference(
+    code_type: str, doc_type: str, *, none_is_sentinel: bool = False
+) -> bool:
     """Whether the docs' type provably disagrees with the code's. Both are canonical.
 
     * Equal types do not differ.
@@ -204,8 +235,12 @@ def is_provable_difference(code_type: str, doc_type: str) -> bool:
     * Otherwise only the members that differ count. If any of them mentions a name that
       is not resolved, a bare generic stands against its own parameterization, or one side
       is only ``Literal`` values of types the other side names, or the docs name a supertype of
-      each differing code member (less specific, not wrong), the difference is not provable.
+      each differing code member (less specific, not wrong), or every member the docs name is a
+      subtype of one the code accepts (narrower, not wrong), the difference is not provable.
       If they are made only of resolved names it is.
+    * ``none_is_sentinel``: the code's default for this parameter is ``None`` and the docs state a
+      concrete one, so the ``| None`` in the annotation is that sentinel and a docs type that
+      omits it is not a difference (ADR-0007 Amendment 7 B).
     """
     if code_type == doc_type:
         return False
@@ -214,8 +249,9 @@ def is_provable_difference(code_type: str, doc_type: str) -> bool:
         return False
     code_rest, code_none = _split_none(_members(code))
     doc_rest, doc_none = _split_none(_members(doc))
+    omits_none = code_none and not doc_none and not none_is_sentinel
     if code_rest == doc_rest:
-        return code_none and not doc_none
+        return omits_none
     only_code = [m for m in _members(code) if ast.unparse(m) in code_rest - doc_rest]
     only_doc = [m for m in _members(doc) if ast.unparse(m) in doc_rest - code_rest]
     if any(not (_names(m) <= _RESOLVED) for m in [*only_code, *only_doc]):
@@ -227,14 +263,20 @@ def is_provable_difference(code_type: str, doc_type: str) -> bool:
         # Less specific, not wrong. A top type already covers None; any other supertype does not
         # say, so docs that omit a None the code allows are still reported (PRD §14 #10).
         covers_none = doc_none or any(_head(m) and _head(m)[0] in _TOP for m in only_doc)  # type: ignore[index]
-        return code_none and not covers_none
+        return code_none and not covers_none and not none_is_sentinel
+    code_members = [m for m in _members(code) if ast.unparse(m) != "None"]
+    doc_members = [m for m in _members(doc) if ast.unparse(m) != "None"]
+    if _narrower(code_members, doc_members):
+        return omits_none  # narrower, not wrong; an omitted None is still PRD §14 #10
     code_heads = {h for m in only_code if (h := _head(m))}
     doc_heads = {h for m in only_doc if (h := _head(m))}
     # `Callable` against `Callable[[int], str]`: the docs left the parameters out.
     return all((name, not parameterized) not in doc_heads for name, parameterized in code_heads)
 
 
-def should_abstain(code_type: str, doc_types: Collection[str]) -> bool:
+def should_abstain(
+    code_type: str, doc_types: Collection[str], *, none_is_sentinel: bool = False
+) -> bool:
     """Whether the projector must not state the code's type for a slot.
 
     True when some doc claim differs from the code but no claim differs *provably*: stating
@@ -243,4 +285,6 @@ def should_abstain(code_type: str, doc_types: Collection[str]) -> bool:
     flag every member.
     """
     differing = [d for d in doc_types if d != code_type]
-    return bool(differing) and not any(is_provable_difference(code_type, d) for d in differing)
+    return bool(differing) and not any(
+        is_provable_difference(code_type, d, none_is_sentinel=none_is_sentinel) for d in differing
+    )

@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   function whose name says it deprecates (`warn_deprecated`) counts as a deprecation notice. See
   ADR-0007 Amendment 6 and ADR-0004 Amendment 4.
 
+- Documentation is read more fully and more carefully: NumPy sections underlined with `=`, `~`, `^`
+  or `#` are recognized; a type field is a union of alternatives with qualifiers (`tuple, None,
+  optional (default None)`); an entry is read only if every name is an identifier; a method's first
+  parameter is its receiver however it is named; and `array-like` or `shape (n,)` are no longer
+  mistaken for types. Docs naming a subtype of the annotation (`dict` for `Mapping`) are no longer
+  reported, nor is a documented `bool` for a sentinel `bool | None = None`. A class that warns from
+  `__init__`, and a call whose message says "deprecated", count as deprecated. See ADR-0007
+  Amendment 7 and ADR-0004 Amendment 5.
+
 ### Added
 
 - M0 foundations scaffold: clean-architecture package layout

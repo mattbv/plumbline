@@ -657,6 +657,31 @@ Ignoring a directive can only remove a claim.
 A `Returns` section that documents an argument rather than a return value, and a docstring template
 placeholder, are single cases in one project's convention.
 
+### What implementing it showed
+
+Re-running the eleven packages already read, as a regression check, found three defects that these
+changes themselves introduced. They were fixed here, and each has a test.
+
+- **A literal value after a type is not an alternative.** `codes_given: bool, False` became the
+  union `bool | False`. A part of a type field that is a literal (`False`, `3`, `'x'`) is a value
+  and is skipped; `None` remains a type alternative.
+- **A bare list of types is not a parameter.** Once `=`-underlined sections were read, `Parameters
+  / ========== / Point3D, Line3D, Plane, tuple, list` (a list of accepted types with no name and
+  no description) was read as five parameters. A NumPy entry with no `:` and no description is not
+  an entry.
+- **A method's first parameter is the receiver, however it is named.** `def angle_between(l1, l2)`
+  in a class has `l1` as its receiver, which the code importer does not list, so documenting it by
+  its real name was reported missing (13 findings). The docstring importer now treats the first
+  parameter of a non-static method as the receiver.
+
+Reading `=`-underlined sections also made 50 findings visible in `sympy` that had always been there.
+Of those I read 49 as real stale documentation and one (a prose line `Note` read as an entry) as a
+misreading.
+
+**Not covered, found on the second fresh set:** a prose label such as `TODO:` read as an entry;
+the word `optional` read as an entry; and a `0` or `1` default documented as `False` or `True`
+(equal in Python, different as strings; five findings).
+
 ### How it will be verified
 
 1. Unit tests per rule and a zoo scenario per cause, each with the neighbouring case that must still
